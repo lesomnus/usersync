@@ -4,8 +4,8 @@
 #
 # Runs the REAL binary as root against REAL shadow-utils and Samba (smbpasswd/
 # pdbedit) inside a THROWAWAY container that is removed on exit — nothing is
-# created on the host or the devcontainer. Requires a reachable docker daemon
-# (the .devcontainer docker-in-docker feature provides one).
+# created on the host or the devcontainer. Requires the `docker` (dind) sidecar
+# service from .devcontainer/docker-compose.yaml (DOCKER_HOST=tcp://docker:2375).
 #
 #   bash scripts/verify-integration.sh
 #
@@ -15,13 +15,16 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 img="${VERIFY_IMAGE:-debian:trixie}"
 
-# --- ensure a docker daemon is reachable (start dind's dockerd if needed) ---
-if ! docker info >/dev/null 2>&1; then
-	echo ">> starting dockerd (docker-in-docker)..."
-	sudo bash -c 'nohup dockerd >/tmp/dockerd.log 2>&1 &' || true
-	for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
-fi
-docker info >/dev/null 2>&1 || { echo "FATAL: no docker daemon reachable (see /tmp/dockerd.log)"; exit 1; }
+# --- wait for the dind docker daemon (the sidecar may still be starting) ---
+echo ">> waiting for the docker daemon (DOCKER_HOST=${DOCKER_HOST:-unset})..."
+for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
+docker info >/dev/null 2>&1 || {
+	echo "FATAL: cannot reach the docker daemon."
+	echo "  Expected the 'docker' dind sidecar from .devcontainer/docker-compose.yaml"
+	echo "  with DOCKER_HOST=tcp://docker:2375 set in the dev service."
+	echo "  Rebuild the devcontainer so both services come up."
+	exit 1
+}
 
 # --- build the static binary on the devcontainer (has Go) ---
 echo ">> building static usersync..."
@@ -118,7 +121,8 @@ echo "RESULT: $pass passed, $fail failed"
 SCRIPT
 
 echo ">> running integration test in a throwaway $img container..."
-docker run --rm \
+# The binary is bind-mounted from /workspace (shared with the dind daemon at the
+# same path); the driver is streamed over stdin so it needs no shared path.
+docker run --rm -i \
 	-v "$here/dist/usersync:/usr/local/bin/usersync:ro" \
-	-v "$drv:/drv.sh:ro" \
-	"$img" bash /drv.sh
+	"$img" bash -s < "$drv"

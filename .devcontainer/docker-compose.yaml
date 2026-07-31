@@ -9,6 +9,10 @@ services:
     privileged: true
     environment:
       - SHELL=/bin/zsh
+      # Drive the dind sidecar below instead of a local daemon.
+      - DOCKER_HOST=tcp://docker:2375
+    depends_on:
+      - docker
 
     volumes:
       - command.history:/commandhistory
@@ -28,7 +32,22 @@ services:
           cpus: "2"
           memory: 4G
 
+  # Isolated Docker daemon (docker-in-docker) so `docker` in the dev container
+  # spins up throwaway containers without touching the host. The workspace is
+  # mounted at the SAME path (/workspace) as in dev, so bind mounts like
+  # `-v /workspace/dist/usersync:...` resolve correctly (the daemon, not the dev
+  # container, resolves bind-mount source paths).
+  docker:
+    image: docker:27-dind
+    privileged: true
+    environment:
+      - DOCKER_TLS_CERTDIR= # plain TCP on 2375 over the internal compose network
+    volumes:
+      - docker.data:/var/lib/docker
+      - ..:/workspace
+
 volumes:
   command.history:
   go.cache.mod:
   go.cache.bin:
+  docker.data:

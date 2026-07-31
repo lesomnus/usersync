@@ -1,0 +1,88 @@
+// Schema for usersync's declarative roster (managed users and groups).
+//
+// usersync does not serialize this with protobuf at runtime — the roster is
+// authored as YAML and parsed with goccy/go-yaml. This .proto exists so the
+// schema stays proto-compatible for a future migration: every field maps
+// cleanly under protojson rules, so `yaml -> json -> protojson.Unmarshal`
+// round-trips without any transformation.
+//
+// protojson rules honored here:
+//   * uid/gid are uint32 (NOT int64/uint64): 64-bit integers are emitted as
+//     quoted strings under protojson, 32-bit ones stay JSON numbers. So the
+//     hand-written YAML keeps `uid: 3001`, not `uid: "3001"`.
+//   * field names are snake_case: protojson accepts the proto field name on
+//     input, which is exactly what the YAML uses (`full_name`).
+//   * unknown fields are rejected by protojson by default -> matches the
+//     "strict decode" validation requirement in plan.md §3.
+
+syntax = "proto3";
+
+package usersync;
+
+option go_package = "github.com/lesomnus/usersync/gen/usersync;usersyncpb";
+
+// Roster is the declared desired state: the complete set of managed users and
+// groups. Maps to roster.yaml.
+message Roster {
+  // Shared (team) groups. `name` must be unique across the list.
+  repeated Group groups = 1;
+
+  // Managed users. `name` must be unique across the list.
+  repeated User users = 2;
+}
+
+// Group is a shared (team) group and its backing folder under groups_base.
+message Group {
+  // Unique group name, e.g. "team-a". Becomes the unix group name and the SMB
+  // share name. Lowercase, no spaces.
+  string name = 1;
+
+  // Group id. Must fall within the team-group range (default 7000-7999) and
+  // must not collide with the user/UPG range.
+  uint32 gid = 2;
+
+  // Human-readable description, e.g. "Perception team". Display only.
+  string description = 3;
+}
+
+// User is a managed SMB-only user (no interactive server login).
+message User {
+  // Unique login/account name, e.g. "skim". Becomes the unix user name, the
+  // UPG (user-private-group) name, and the SMB account name.
+  string name = 1;
+
+  // User id. Must fall within the user range (default 3000-6999). The tool
+  // creates a matching UPG with gid == uid.
+  uint32 uid = 2;
+
+  // Display name for the /etc/passwd GECOS field (useradd -c), exposed under a
+  // meaningful key instead of the historical "gecos". Optional.
+  // Must NOT contain ',' or ':' (GECOS/passwd field separators).
+  string full_name = 3;
+
+  // Supplementary (team) group names. Each must reference a Group.name defined
+  // in the same roster. Empty => home-only, no team membership. This set is the
+  // source of truth: the tool replaces the user's supplementary groups to match.
+  repeated string groups = 4;
+
+  // Lifecycle status. Omitted => active. See Status. Whatever the status, the
+  // entry's presence keeps its uid+name reserved (uniqueness is validated across
+  // ALL entries), which is the point: never free a uid for reuse by another user.
+  Status status = 5;
+}
+
+// Lifecycle status of a user entry. Omitted (0) => active.
+//
+// Rationale for keeping non-active users in the roster instead of deleting them:
+// a deleted uid can be handed to a future user, who then inherits every file the
+// old user's numeric uid still owns across the filesystem (homes, group folders,
+// snapshots, backups). Retiring — not deleting — keeps the number reserved.
+//
+// Value names are intentionally lowercase so protojson round-trips clean YAML
+// (`status: disabled`, not `status: STATUS_DISABLED`). buf-lint rules
+// ENUM_VALUE_UPPER_SNAKE_CASE and ENUM_ZERO_VALUE_SUFFIX are excepted for this enum.
+enum Status {
+  active   = 0;  // account exists, SMB enabled (default)
+  disabled = 1;  // account + home kept, SMB disabled (reversible); uid stays reserved
+  reserved = 2;  // no managed account; uid + name reserved to block reuse (tombstone)
+}

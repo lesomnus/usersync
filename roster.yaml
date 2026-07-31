@@ -1,0 +1,38 @@
+# roster.yaml — desired users/groups. Version-controlled; edit then `usersync apply`.
+# Operational settings (ranges, paths, seed, provider) live in usersync.yaml.
+
+# Shared (team) groups. `name` unique; `gid` within the team-group range (default 7000–7999).
+groups:
+  - name: team-a
+    gid: 7001
+    description: Perception team
+  - name: team-b
+    gid: 7002
+    description: Planning team
+
+# Users. `name` unique; `uid` within the user range (default 3000–6999).
+# The tool creates a matching UPG (User Private Group) with gid = uid.
+users:
+  - name: skim
+    uid: 3001
+    full_name: Sunghyun Kim
+    groups: [team-a]           # supplementary (team) groups; omit for home-only
+  - name: jlee
+    uid: 3002
+    full_name: Jiwon Lee
+    groups: [team-a, team-b]
+  - name: ychoi
+    uid: 3003
+    full_name: Yuna Choi       # no groups -> home only
+
+  # Lifecycle: omit `status` for active. Keep non-active users here (don't delete
+  # the block) so their uid stays reserved and can never be handed to someone else.
+  - name: park                 # on leave: SMB off, home kept, reversible
+    uid: 3004
+    full_name: Minjun Park
+    groups: [team-b]
+    status: disabled
+  - name: oldhand              # left for good: no account, but uid 3005 burned
+    uid: 3005
+    full_name: Retired User
+    status: reserved

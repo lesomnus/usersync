@@ -498,7 +498,7 @@ type Samba interface {
 - ✅ **백엔드**: `internal/run`(injectable exec+Fake), `internal/provider`(shadow-utils: getent Scan + useradd/usermod/groupadd, golden-command 테스트), `internal/samba`(smbpasswd/pdbedit), `internal/fsops`(홈/그룹 폴더), `internal/report`(text/JSON), `internal/executor`(dispatch+Collect, fake 테스트).
 - ✅ **CLI**: `cmd/config` 운영설정(paths/manage/protect/on_out_of_scope/seed/provider) + `plan`(`--commands` 미리보기)·`apply`·`export`·`purge`(`--reserve` tombstone). greet 스캐폴딩 제거.
 - ✅ **기능 검증**: 스텁 getent/pdbedit로 E2E — plan/commands/export 동작, **`export | plan` = 0 action**(멱등 왕복, 홈/폴더 존재 시), out-of-scope error·skip, protected 하드 거부 확인.
-- ✅ **실계정 통합검증**: `internal/integration`(빌드태그 `integration`, root 아니면 self-skip) — 일회용 컨테이너에서 **진짜 useradd/samba**로 apply. §13 계정 항목 전부 통과(UPG, 홈 0700 소유, nologin, 비번 잠김, pdbedit 활성/비활성, 2770 setgid, 멱등, 오프보딩/재온보딩). 로컬은 dind 사이드카+`scripts/verify-integration.sh`, CI는 `.github/workflows/integration.yaml`가 **같은 `go test -tags integration`** 재사용.
+- ✅ **실계정 통합검증**: `internal/integration`(빌드태그 `integration`, root 아니면 self-skip) — 일회용 컨테이너에서 **진짜 useradd/samba**로 apply. §13 계정 항목 전부 통과(UPG, 홈 0700 소유, nologin, 비번 잠김, pdbedit 활성/비활성, 2770 setgid, 멱등, 오프보딩/재온보딩). 로컬은 dind 사이드카+`scripts/verify-integration.sh`, CI는 `ci.yaml`의 `integration` 잡이 **같은 `go test -tags integration`** 재사용. **이미지 push는 `build`(유닛)·`integration` 둘 다 통과해야 실행**(`needs`).
 - ✅ **적대적 리뷰 + 수정**: 4개 차원 다중에이전트 리뷰 → 검증된 8건 수정.
   - 홈/그룹폴더 **드리프트·부분생성 치유**: `state`에 존재여부 수집, 없으면 `ensure-home`/폴더 재생성(멱등). *(퍼미션 mode 드리프트 보정은 mode 수집 후속과제)*
   - **기존 SMB 비번 보존**: 유닉스 계정 부재+SMB 잔존 시 `Create` 스킵(`HasSmb`) → 사용자 비번 안 덮음.

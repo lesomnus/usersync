@@ -519,7 +519,8 @@ type Samba interface {
   - **mode 드리프트 보정**: 홈 `0700`/폴더 `2770 setgid` 어긋나면 재보정.
   - **교차 이름 uid/gid 충돌** 감지 → RefuseUser/RefuseGroup(cryptic apply 실패 방지). **orphan 상시 Notice**. **apply 리포트가 실행 결과 반영**(✗ FAILED). **동시 실행 락**(flock). **provider auto가 BSD면 pw 우선**. LICENSE(Apache-2.0), CI lint(gofmt+vet) 게이트, purge `--reserve` 옵트인(주석 보존), seed 파일 권한 경고, 버전 `ReadBuildInfo` 폴백.
 - ✅ **블로커 수정 적대적 재검증 4라운드**: 각 수정을 독립 검증→잔여 구멍 발견→재수정 반복(파생 gap: smb.conf path/groupsBase, create-path 그룹 strip, config floor 클램프, argv/scan 이름 exec-arg, 예약 섹션명 global/homes, busybox addgroup/delgroup). 라운드마다 더 좁아져 수렴. 남은 건 test-coverage 수준의 미세 항목.
-- 🚧 **남음**: 파일 서버 실배포. (pw 실검증은 FreeBSD 호스트 필요 — Linux CI 불가.) LICENSE는 Apache-2.0로 넣었으니 확정/변경은 메인테이너 판단.
+- 🚧 **남음**: 파일 서버 실배포. (pw 실검증은 FreeBSD 호스트 필요 — Linux CI 불가.)
+- 라이선스: **Apache-2.0**(메인테이너 지정).
 
 **0단계 — 스캐폴딩 정리**
 - `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–6999, gid 7000–7999, system_floor 1000, on_out_of_scope=error, provider auto).

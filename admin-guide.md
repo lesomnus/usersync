@@ -79,6 +79,7 @@ users:
 ```
 - **1차 그룹은 UPG**: 툴이 사용자명과 같은 개인 그룹을 gid=uid로 만든다.
 - uid/name은 **active/disabled/reserved 전체에 걸쳐 유일**해야 한다(= 재사용 방지).
+- **이름 규칙**: user/group name은 `^[a-z_][a-z0-9_-]{0,31}$`(소문자/숫자/`_`/`-`, 선행 대시·공백·대문자·`/` 불가). `global`/`homes`/`printers`는 Samba 예약 섹션명이라 그룹명으로 못 쓴다. `full_name`·`description`에 개행/콤마/콜론 불가.
 
 ---
 

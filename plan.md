@@ -493,6 +493,10 @@ type Samba interface {
 
 > 각 단계 끝에 실행 가능한 산출물이 남도록 세로로 얇게 자름. `reconcile`·`idrange`·`secret`은 root 없이 CI에서 테스트.
 
+### 진행 상황 (2026-07-31)
+- ✅ **순수 코어**: `internal/idrange`(분류+floor 클램프), `internal/secret`(seed 파생+golden), `internal/roster`(types+strict load+validate), `internal/state`, `internal/reconcile`(status×actual 매트릭스). 전부 단위테스트 통과(root 불필요).
+- 🚧 **다음**: cmd/config 확장(운영 설정) + `report` + `plan`/`apply`/`export` 서브커맨드 + provider/samba.
+
 **0단계 — 스캐폴딩 정리**
 - `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–6999, gid 7000–7999, system_floor 1000, on_out_of_scope=error, provider auto).
 - `idrange` 패키지: id → `Protected|Managed|OutOfScope` 분류. **`system_floor`는 `max(1000, cfg)`로 클램프**(1000 밑 불가). "보호 > 관리 > 범위 밖" 판정 함수 + 표 케이스 단위테스트.

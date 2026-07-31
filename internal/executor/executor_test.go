@@ -72,7 +72,7 @@ func (f fakeFS) EnsureHomeDir(path string, uid, gid uint32) error {
 	*f.log = append(*f.log, fmt.Sprintf("HomeDir(%s,%d,%d)", path, uid, gid))
 	return nil
 }
-func (f fakeFS) Exists(string) bool { return true }
+func (f fakeFS) Stat(string) (bool, uint32, uint32, uint32) { return true, 0o700, 0, 0 }
 
 func newDeps(log *[]string) Deps {
 	return Deps{

@@ -51,21 +51,27 @@ type Provider interface {
 	LockPassword(ctx context.Context, user string) error
 }
 
-// Detect selects a backend by name; "auto"/"" probes PATH. Only shadow-utils is
-// implemented; busybox/pw are recognized but return a clear not-implemented error.
+// Detect selects a backend by name; "auto"/"" probes PATH in order
+// useradd (shadow-utils), adduser (busybox), then pw (FreeBSD).
 func Detect(name string, r run.Runner) (Provider, error) {
 	switch name {
 	case "shadow-utils", "shadowutils":
 		return NewShadowUtils(r), nil
 	case "busybox":
-		return nil, fmt.Errorf("provider %q not implemented yet (only shadow-utils)", name)
+		return NewBusybox(r), nil
 	case "pw":
-		return nil, fmt.Errorf("provider %q not implemented yet (only shadow-utils)", name)
+		return NewPw(r), nil
 	case "", "auto":
 		if _, err := exec.LookPath("useradd"); err == nil {
 			return NewShadowUtils(r), nil
 		}
-		return nil, fmt.Errorf("auto-detect: no supported account backend found (need useradd)")
+		if _, err := exec.LookPath("adduser"); err == nil {
+			return NewBusybox(r), nil
+		}
+		if _, err := exec.LookPath("pw"); err == nil {
+			return NewPw(r), nil
+		}
+		return nil, fmt.Errorf("auto-detect: no supported account backend found (need useradd, adduser, or pw)")
 	default:
 		return nil, fmt.Errorf("unknown provider %q", name)
 	}

@@ -39,6 +39,7 @@ import (
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/usersync/internal/samba"
 	"github.com/lesomnus/usersync/internal/secret"
+	"github.com/lesomnus/usersync/internal/smbconf"
 	"github.com/lesomnus/usersync/internal/state"
 )
 
@@ -327,6 +328,76 @@ func TestSmbWireAuth(t *testing.T) {
 	// 3) wrong password is rejected (SMB auth actually enforced).
 	if out, err := smbc("skim", "skim", "wrong-"+pw, "ls"); err == nil {
 		t.Errorf("a wrong SMB password must be rejected:\n%s", out)
+	}
+}
+
+// TestModeDriftHeal drifts the home/group-folder permissions and owner after a
+// successful apply, then verifies a re-apply restores them (0700 owned by the
+// UPG; 2770 setgid owned by the team group).
+func TestModeDriftHeal(t *testing.T) {
+	requireRootAndTools(t)
+	s := setup(t)
+	s.apply(t, fullRoster())
+
+	home := filepath.Join(s.homeBase, "skim")
+	folder := filepath.Join(s.groupsBase, "team-a")
+	for _, op := range []func() error{
+		func() error { return os.Chmod(home, 0o777) },
+		func() error { return os.Chown(home, 0, 0) },
+		func() error { return os.Chmod(folder, 0o770) }, // lose setgid
+	} {
+		if err := op(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s.apply(t, fullRoster()) // must heal the drift
+
+	if perm, uid, gid := statOwnerMode(t, home); perm != 0o700 || uid != 3001 || gid != 3001 {
+		t.Errorf("home not healed: %o %d:%d, want 700 3001:3001", perm, uid, gid)
+	}
+	if perm, _, gid := statOwnerMode(t, folder); perm != 0o2770 || gid != 7001 {
+		t.Errorf("group folder not healed: %o gid %d, want 2770 gid 7001", perm, gid)
+	}
+}
+
+// TestSmbConfGenerate generates the shares block into a base smb.conf, verifies
+// real testparm accepts it, that a backup is kept, and that it is idempotent.
+func TestSmbConfGenerate(t *testing.T) {
+	requireRootAndTools(t, "testparm")
+	s := setup(t)
+	s.apply(t, fullRoster()) // so team-a exists for the share
+
+	conf := filepath.Join(t.TempDir(), "smb.conf")
+	base := "[global]\n\tworkgroup = WORKGROUP\n\tsecurity = user\n"
+	if err := os.WriteFile(conf, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := smbconf.Apply(context.Background(), conf, s.groupsBase, fullRoster().Groups, run.Exec{}, false)
+	if err != nil {
+		t.Fatalf("smbconf apply: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected the smb.conf to change")
+	}
+	if _, err := os.Stat(conf + ".bak"); err != nil {
+		t.Errorf("backup not written: %v", err)
+	}
+	b, _ := os.ReadFile(conf)
+	for _, want := range []string{smbconf.BeginMarker, "[homes]", "[team-a]", "force group = team-a"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("generated smb.conf missing %q", want)
+		}
+	}
+	if err := smbconf.Validate(context.Background(), run.Exec{}, conf); err != nil {
+		t.Errorf("real testparm rejected the generated smb.conf: %v", err)
+	}
+	// idempotent: a second Apply is a no-op.
+	if changed, err := smbconf.Apply(context.Background(), conf, s.groupsBase, fullRoster().Groups, run.Exec{}, false); err != nil {
+		t.Fatal(err)
+	} else if changed {
+		t.Error("second smbconf apply should be a no-op")
 	}
 }
 

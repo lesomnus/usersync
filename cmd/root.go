@@ -24,6 +24,7 @@ func NewCmdRoot() *xli.Command {
 			NewCmdApply(),
 			NewCmdExport(),
 			NewCmdPurge(),
+			NewCmdShares(),
 		},
 
 		Handler: xli.Chain(

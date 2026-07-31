@@ -61,7 +61,7 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 			continue
 		}
 		if opts.FS != nil {
-			u.HomeExists = opts.FS.Exists(filepath.Join(opts.HomeBase, name))
+			u.HomeExists, u.HomePerm, u.HomeUID, u.HomeGID = opts.FS.Stat(filepath.Join(opts.HomeBase, name))
 		}
 		out.Users[name] = u
 	}
@@ -70,7 +70,7 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 			continue
 		}
 		if opts.FS != nil {
-			g.FolderExists = opts.FS.Exists(filepath.Join(opts.GroupsBase, name))
+			g.FolderExists, g.FolderPerm, _, g.FolderGID = opts.FS.Stat(filepath.Join(opts.GroupsBase, name))
 		}
 		out.Groups[name] = g
 	}

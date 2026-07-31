@@ -44,14 +44,28 @@ func countChange(as []Action) int {
 	return n
 }
 
-// activeState builds a state with u present (and its home already provisioned,
-// unless the caller set HomeExists) plus an SMB account with the given enabled state.
+// activeState builds a state with u present (home already provisioned correctly:
+// 0700 owned by its UPG) plus an SMB account with the given enabled state.
 func activeState(u state.User, enabled bool) *state.State {
 	u.HomeExists = true
+	u.HomePerm = 0o700
+	u.HomeUID = u.UID
+	u.HomeGID = u.UID
 	s := state.New()
 	s.Users[u.Name] = u
 	s.Smb[u.Name] = state.Smb{Name: u.Name, Enabled: enabled}
 	return s
+}
+
+// okHome / okFolder mark a manually-built entry as correctly provisioned so it
+// is steady (no drift heal).
+func okHome(u state.User) state.User {
+	u.HomeExists, u.HomePerm, u.HomeUID, u.HomeGID = true, 0o700, u.UID, u.UID
+	return u
+}
+func okFolder(g state.Group) state.Group {
+	g.FolderExists, g.FolderPerm, g.FolderGID = true, 0o2770, g.GID
+	return g
 }
 
 func TestCreateUserAndGroup(t *testing.T) {
@@ -71,8 +85,8 @@ func TestIdempotentNoChange(t *testing.T) {
 		Users:  []roster.User{{Name: "skim", UID: 3001, Groups: []string{"team-a"}}},
 	}
 	s := state.New()
-	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true}
-	s.Users["skim"] = state.User{Name: "skim", UID: 3001, GID: 3001, Groups: []string{"team-a"}, HomeExists: true}
+	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7001})
+	s.Users["skim"] = okHome(state.User{Name: "skim", UID: 3001, GID: 3001, Groups: []string{"team-a"}})
 	s.Smb["skim"] = state.Smb{Name: "skim", Enabled: true}
 
 	got := Reconcile(d, s, cls())
@@ -87,9 +101,9 @@ func TestUpdateGroups(t *testing.T) {
 		Users:  []roster.User{{Name: "jlee", UID: 3002, Groups: []string{"team-a", "team-b"}}},
 	}
 	s := state.New()
-	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true}
-	s.Groups["team-b"] = state.Group{Name: "team-b", GID: 7002, FolderExists: true}
-	s.Users["jlee"] = state.User{Name: "jlee", UID: 3002, Groups: []string{"team-a"}, HomeExists: true} // missing team-b
+	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7001})
+	s.Groups["team-b"] = okFolder(state.Group{Name: "team-b", GID: 7002})
+	s.Users["jlee"] = okHome(state.User{Name: "jlee", UID: 3002, Groups: []string{"team-a"}}) // missing team-b
 	s.Smb["jlee"] = state.Smb{Name: "jlee", Enabled: true}
 
 	got := Reconcile(d, s, cls())
@@ -195,7 +209,7 @@ func TestHomeHeal(t *testing.T) {
 		t.Fatalf("missing home => EnsureHome, got %v", kinds(got))
 	}
 	// once present, no EnsureHome.
-	s.Users["skim"] = state.User{Name: "skim", UID: 3001, HomeExists: true}
+	s.Users["skim"] = okHome(state.User{Name: "skim", UID: 3001})
 	if got := Reconcile(d, s, cls()); hasKind(got, EnsureHome) {
 		t.Fatalf("present home => no EnsureHome, got %v", kinds(got))
 	}
@@ -210,7 +224,7 @@ func TestGroupFolderHeal(t *testing.T) {
 		t.Fatalf("present group with missing folder => CreateGroup (idempotent re-ensure), got %v", kinds(got))
 	}
 	// folder present => no-op.
-	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true}
+	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7001})
 	if got := Reconcile(d, s, cls()); len(got) != 0 {
 		t.Fatalf("present group + folder => 0 actions, got %v", kinds(got))
 	}
@@ -244,7 +258,7 @@ func TestReserveBlocksReuseIsLoaderConcern(t *testing.T) {
 func TestAddSmbWhenMissing(t *testing.T) {
 	d := &roster.Roster{Users: []roster.User{{Name: "skim", UID: 3001}}}
 	s := state.New()
-	s.Users["skim"] = state.User{Name: "skim", UID: 3001, HomeExists: true} // exists, no smb account
+	s.Users["skim"] = okHome(state.User{Name: "skim", UID: 3001}) // exists, no smb account
 	got := Reconcile(d, s, cls())
 	if len(got) != 1 || got[0].Kind != AddSmb {
 		t.Fatalf("active present without smb => AddSmb, got %v", kinds(got))
@@ -267,5 +281,31 @@ func TestDeterministicOrder(t *testing.T) {
 	}
 	if a[0].Name != "amy" || a[1].Name != "bob" || a[2].Name != "zoe" {
 		t.Fatalf("want name-sorted order, got %s,%s,%s", a[0].Name, a[1].Name, a[2].Name)
+	}
+}
+
+func TestHomePermDrift(t *testing.T) {
+	// Home exists but drifted (0755, owned by root) => must be re-ensured; once
+	// correct (0700 owned by the UPG) => no action (idempotent).
+	d := &roster.Roster{Users: []roster.User{{Name: "skim", UID: 3001}}}
+	s := state.New()
+	s.Users["skim"] = state.User{Name: "skim", UID: 3001, HomeExists: true, HomePerm: 0o755, HomeUID: 0, HomeGID: 0}
+	s.Smb["skim"] = state.Smb{Name: "skim", Enabled: true}
+	if got := Reconcile(d, s, cls()); !hasKind(got, EnsureHome) {
+		t.Fatalf("home perm/owner drift => EnsureHome, got %v", kinds(got))
+	}
+	s.Users["skim"] = okHome(state.User{Name: "skim", UID: 3001})
+	if got := Reconcile(d, s, cls()); hasKind(got, EnsureHome) {
+		t.Fatalf("correct home => no EnsureHome, got %v", kinds(got))
+	}
+}
+
+func TestGroupFolderPermDrift(t *testing.T) {
+	// Folder exists but lost its setgid bit (0770) => must be re-ensured.
+	d := &roster.Roster{Groups: []roster.Group{{Name: "team-a", GID: 7001}}}
+	s := state.New()
+	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true, FolderPerm: 0o770, FolderGID: 7001}
+	if got := Reconcile(d, s, cls()); len(got) != 1 || got[0].Kind != CreateGroup {
+		t.Fatalf("folder perm drift => CreateGroup heal, got %v", kinds(got))
 	}
 }

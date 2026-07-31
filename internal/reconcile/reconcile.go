@@ -15,6 +15,18 @@ import (
 
 func reasonf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
+// homeDrifted reports whether a present user's home directory is missing or has
+// drifted from the desired 0700 owned by its UPG (uid == gid == UID).
+func homeDrifted(u roster.User, cur state.User) bool {
+	return !cur.HomeExists || cur.HomePerm != 0o700 || cur.HomeUID != u.UID || cur.HomeGID != u.UID
+}
+
+// folderDrifted reports whether a present group's folder is missing or has
+// drifted from the desired 2770 setgid owned by the group.
+func folderDrifted(g roster.Group, cur state.Group) bool {
+	return !cur.FolderExists || cur.FolderPerm != 0o2770 || cur.FolderGID != g.GID
+}
+
 // Kind is the type of a reconcile action.
 type Kind int
 
@@ -142,12 +154,13 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		case cur.GID != g.GID:
 			out = append(out, Action{Kind: RefuseGroup, Name: g.Name, GID: g.GID,
 				Reason: reasonf("gid %d desired, %d actual — change is manual", g.GID, cur.GID)})
-		case !cur.FolderExists:
-			// group exists but its folder is missing (drift or a partial create):
-			// CreateGroup's dispatch is idempotent for the group and re-ensures the folder.
-			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, Reason: "group folder missing"})
+		case folderDrifted(g, cur):
+			// group exists but its folder is missing or its perms/owner drifted
+			// (or a partial create): CreateGroup's dispatch is idempotent for the
+			// group and re-ensures the folder to 2770 setgid.
+			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, Reason: "group folder missing or wrong perms"})
 		}
-		// present, gid matches, folder present => no-op.
+		// present, gid matches, folder correct => no-op.
 	}
 
 	// --- users ---
@@ -223,8 +236,8 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) 
 		if !sameGroupSet(u.Groups, cur.Groups) {
 			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: u.Groups, Status: u.Status})
 		}
-		if !cur.HomeExists {
-			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing"})
+		if homeDrifted(u, cur) {
+			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing or wrong perms"})
 		}
 		if hasSmb && sm.Enabled {
 			out = append(out, Action{Kind: DisableUser, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "status: disabled"})
@@ -240,8 +253,8 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) 
 		if !sameGroupSet(u.Groups, cur.Groups) {
 			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: u.Groups, Status: u.Status})
 		}
-		if !cur.HomeExists {
-			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing"})
+		if homeDrifted(u, cur) {
+			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing or wrong perms"})
 		}
 		switch {
 		case !hasSmb:

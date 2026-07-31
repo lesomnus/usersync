@@ -4,25 +4,37 @@
 // the executor be unit-tested without a real (root-requiring) filesystem.
 package fsops
 
-import "os"
+import (
+	"os"
+	"syscall"
+)
 
-// FS creates and permissions the home and group directories, and reports
-// whether a directory exists (used to detect drift / partial provisioning).
+// FS creates and permissions the home and group directories, and observes a
+// directory's presence/mode/owner (used to detect drift / partial provisioning).
 type FS interface {
 	// EnsureGroupDir makes path 2770 (setgid) owned by group gid.
 	EnsureGroupDir(path string, gid uint32) error
 	// EnsureHomeDir makes path 0700 owned by uid:gid.
 	EnsureHomeDir(path string, uid, gid uint32) error
-	// Exists reports whether path exists.
-	Exists(path string) bool
+	// Stat reports whether path exists and, if so, its permission bits (with the
+	// setgid bit folded in as 0o2000) and owning uid/gid.
+	Stat(path string) (exists bool, perm, uid, gid uint32)
 }
 
 // OS is the real filesystem implementation.
 type OS struct{}
 
-func (OS) Exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+func (OS) Stat(path string) (bool, uint32, uint32, uint32) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false, 0, 0, 0
+	}
+	perm := uint32(fi.Mode().Perm())
+	if fi.Mode()&os.ModeSetgid != 0 {
+		perm |= 0o2000
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	return true, perm, st.Uid, st.Gid
 }
 
 func (OS) EnsureGroupDir(path string, gid uint32) error {

@@ -36,7 +36,12 @@ usersync plan --commands # also print the exact backend commands each action wou
 usersync apply           # execute the actions (root; idempotent; never deletes)
 usersync export          # print the current managed state as a roster.yaml (bootstrap / drift)
 usersync purge <user>    # DANGEROUS: archive home, delete account + UPG, reserve the uid
+usersync shares          # print the smb.conf [homes]+[<team>] block from the roster
+usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kept); --reload reloads smbd
 ```
+
+The account backend is auto-detected (`provider: auto`): shadow-utils
+(`useradd`), busybox (`adduser`), or BSD `pw` — set `provider:` to pin one.
 
 Common flags: `--roster`, `--config`, `--json`, `--skip-out-of-scope`,
 `--seed-file`, `--home-base`, `--groups-base`.

@@ -154,9 +154,9 @@ func (p printFS) EnsureHomeDir(path string, uid, gid uint32) error {
 	return nil
 }
 
-// Exists is unused during command preview (Collect uses the real FS); present
+// Stat is unused during command preview (Collect uses the real FS); present
 // only to satisfy fsops.FS.
-func (printFS) Exists(string) bool { return false }
+func (printFS) Stat(string) (bool, uint32, uint32, uint32) { return false, 0, 0, 0 }
 
 // dryDeps builds an executor whose backends print commands instead of executing
 // them (used by `plan --commands`). The deriver seed is irrelevant because the

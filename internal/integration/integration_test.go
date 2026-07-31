@@ -45,15 +45,39 @@ import (
 
 const seedValue = "integration-seed"
 
+// testProvider selects the account backend under test via USERSYNC_TEST_PROVIDER
+// (shadow-utils by default; "busybox" and "pw" for the other backends), so the
+// same suite runs against each backend in its own container.
+func testProvider(r run.Runner) provider.Provider {
+	switch os.Getenv("USERSYNC_TEST_PROVIDER") {
+	case "busybox":
+		return provider.NewBusybox(r)
+	case "pw":
+		return provider.NewPw(r)
+	default:
+		return provider.NewShadowUtils(r)
+	}
+}
+
 func requireRootAndTools(t *testing.T, tools ...string) {
 	t.Helper()
 	if os.Geteuid() != 0 {
 		t.Skip("integration test needs root (creates real accounts); run inside a container")
 	}
-	base := []string{"useradd", "usermod", "groupadd", "userdel", "groupdel", "getent", "passwd", "smbpasswd", "pdbedit"}
+	// Harness tools (used by the test itself, not the provider under test).
+	base := []string{"userdel", "groupdel", "getent", "passwd", "smbpasswd", "pdbedit"}
+	// Backend-specific account tools.
+	switch os.Getenv("USERSYNC_TEST_PROVIDER") {
+	case "busybox":
+		base = append(base, "adduser", "addgroup", "delgroup")
+	case "pw":
+		base = append(base, "pw")
+	default:
+		base = append(base, "useradd", "usermod", "groupadd")
+	}
 	for _, tool := range append(base, tools...) {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("missing required tool %q (install shadow-utils + samba)", tool)
+			t.Skipf("missing required tool %q", tool)
 		}
 	}
 }
@@ -105,7 +129,7 @@ func setup(t *testing.T) stack {
 		}
 	}
 	runner := run.Exec{}
-	prov := provider.NewShadowUtils(runner)
+	prov := testProvider(runner)
 	smb := samba.New(runner)
 	deps := executor.Deps{
 		Provider:   prov,

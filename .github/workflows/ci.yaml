@@ -67,10 +67,25 @@ jobs:
       - name: Integration test (real useradd + samba, throwaway container)
         run: go test -tags integration -v ./internal/integration/
 
-  # Only push the image when BOTH the unit-test/build and the integration test
-  # pass — a failing integration run must not publish an image.
+  # Same suite against the busybox backend on real Alpine (adduser/addgroup).
+  # Run via `docker run` on the ubuntu runner so checkout uses the host git.
+  integration-busybox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Busybox integration (Alpine container)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src \
+            -e GOFLAGS=-buildvcs=false -e USERSYNC_TEST_PROVIDER=busybox \
+            golang:1.26-alpine sh -c '
+              apk add --no-cache samba samba-common-tools samba-client shadow >/dev/null
+              go test -tags integration -v ./internal/integration/
+            '
+
+  # Only push the image when the build/unit tests AND both integration suites
+  # (shadow-utils + busybox) pass — a failing test must not publish an image.
   push:
-    needs: [build, integration]
+    needs: [build, integration, integration-busybox]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:

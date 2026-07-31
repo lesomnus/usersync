@@ -502,7 +502,7 @@ type Samba interface {
 - ✅ **SMB 실접속(wire-auth) 검증**: `TestSmbWireAuth` — 실제 `smbd` 기동 + `smbclient`로, 시드 파생 비번으로 인증해 **자기 홈 읽기/쓰기 OK, 남의 홈 `ACCESS_DENIED`, 틀린 비번 거부** 확인. (SSH 차단은 nologin+비번잠김으로 §13에서 이미 보장.)
 - ✅ **선택기능 전부 구현**:
   - **퍼미션 mode 드리프트 보정**: `state`가 홈/폴더의 perm·owner까지 수집, reconcile이 `0700`/`2770 setgid`에서 벗어나면 `ensure-home`/폴더 재보정(멱등). 실검증 `TestModeDriftHeal`.
-  - **busybox/pw provider**: `internal/provider/{busybox,pw}.go` — `adduser/addgroup`(usermod 없이 addgroup/delgroup diff), `pw`. `Detect` auto가 useradd→adduser→pw 탐지. golden-command 단위테스트.
+  - **busybox/pw provider**: `internal/provider/{busybox,pw}.go` — `adduser/addgroup`(usermod 없이 addgroup/delgroup diff), `pw`. `Detect` auto가 useradd→adduser→pw 탐지. golden-command 단위테스트 + **busybox는 실 Alpine 컨테이너에서 전체 통합 스위트 통과**(env `USERSYNC_TEST_PROVIDER`로 동일 스위트를 백엔드별 실행). pw는 FreeBSD라 Linux Docker에서 실행 불가 → golden-command만.
   - **smb.conf 자동생성(Phase 2)**: `internal/smbconf` — 마커 블록에 `[homes]`+팀별 `[<team>]` 렌더, testparm 검증 후 백업+치환, `smbcontrol reload`. `usersync shares [--write --reload]`. 실검증 `TestSmbConfGenerate`(진짜 testparm).
 - ✅ **적대적 리뷰 + 수정**: 4개 차원 다중에이전트 리뷰 → 검증된 8건 수정.
   - 홈/그룹폴더 **드리프트·부분생성 치유**: `state`에 존재여부 수집, 없으면 `ensure-home`/폴더 재생성(멱등). *(퍼미션 mode 드리프트 보정은 mode 수집 후속과제)*
@@ -511,7 +511,7 @@ type Samba interface {
   - **범위 밖 그룹 참조**: 사용자 보조그룹은 *유지된* 그룹 기준 검증(skip 시 dangling 방지).
   - **비-root export**: pdbedit 실패를 경고로 강등, 유저/그룹은 계속 출력.
   - **reserved 잔존 상시 알림**(Notice), `--no-reserve` 구현. createUser 홈을 계정 직후 생성(부분실패 대비).
-- 🚧 **남음**: 파일 서버 실배포 + busybox/pw 실기기 통합검증(현재 golden-command 단위테스트만; 실 alpine/BSD 컨테이너 검증은 후속).
+- 🚧 **남음**: 파일 서버 실배포. (pw 실검증은 FreeBSD 호스트 필요 — Linux CI 불가.)
 
 **0단계 — 스캐폴딩 정리**
 - `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–6999, gid 7000–7999, system_floor 1000, on_out_of_scope=error, provider auto).

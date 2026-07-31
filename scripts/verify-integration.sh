@@ -16,7 +16,6 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
-img="${VERIFY_IMAGE:-golang:1.26}"
 
 # --- wait for the dind docker daemon (the sidecar may still be starting) ---
 echo ">> waiting for the docker daemon (DOCKER_HOST=${DOCKER_HOST:-unset})..."
@@ -29,18 +28,23 @@ docker info >/dev/null 2>&1 || {
 	exit 1
 }
 
-# The repo is bind-mounted from /workspace (shared with the dind daemon at the
-# same path); the driver is streamed over stdin so it needs no shared path.
-echo ">> running 'go test -tags integration' in a throwaway $img container..."
-docker run --rm -i \
-	-v "$here:/src" -w /src \
-	-e GOFLAGS=-buildvcs=false \
-	"$img" bash -s <<'SCRIPT'
-set -eu
-export DEBIAN_FRONTEND=noninteractive
-echo ">> installing shadow-utils + samba..."
-apt-get update -qq
-apt-get install -y -qq passwd samba samba-common-bin smbclient >/dev/null
-echo ">> go test -tags integration ..."
-go test -tags integration -v ./internal/integration/
-SCRIPT
+# The repo is bind-mounted at /src (shared with the dind daemon via /workspace).
+# Run the whole suite against each account backend in its own container:
+#   - shadow-utils on Debian (golang:1.26)
+#   - busybox on Alpine (golang:1.26-alpine), which really uses adduser/addgroup
+# (pw/FreeBSD cannot run under Linux Docker, so it stays golden-command tested.)
+run_suite() { # <image> <provider> <install-cmd>
+	echo ">> integration in $1 (provider=$2)..."
+	docker run --rm -i \
+		-v "$here:/src" -w /src \
+		-e GOFLAGS=-buildvcs=false \
+		-e USERSYNC_TEST_PROVIDER="$2" \
+		"$1" sh -c "set -e; echo '   installing deps...'; $3 >/dev/null 2>&1; go test -tags integration -v ./internal/integration/"
+}
+
+rc=0
+run_suite "golang:1.26" "shadow-utils" \
+	"export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq passwd samba samba-common-bin smbclient" || rc=1
+run_suite "golang:1.26-alpine" "busybox" \
+	"apk add --no-cache samba samba-common-tools samba-client shadow" || rc=1
+exit $rc

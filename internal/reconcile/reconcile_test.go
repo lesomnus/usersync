@@ -354,3 +354,35 @@ func TestCrossNameUIDCollisionRefused(t *testing.T) {
 		t.Fatalf("uid held by another name => RefuseUser, got %v", kinds(got))
 	}
 }
+
+func TestRefuseCreateWhenNameExistsOutOfRange(t *testing.T) {
+	// A pre-existing account named "alice" at an out-of-range uid (hidden from
+	// managed Users) must block a create — never mutate someone else's account.
+	d := &roster.Roster{Users: []roster.User{{Name: "alice", UID: 3001}}}
+	s := state.New()
+	s.AllUsers["alice"] = 500 // system account, out of managed range
+	got := Reconcile(d, s, cls())
+	if len(got) != 1 || got[0].Kind != RefuseUser {
+		t.Fatalf("create colliding with out-of-range account => RefuseUser, got %v", kinds(got))
+	}
+}
+
+func TestRefuseCreateOnUPGGroupMismatch(t *testing.T) {
+	d := &roster.Roster{Users: []roster.User{{Name: "alice", UID: 3001}}}
+	s := state.New()
+	s.AllGroups["alice"] = 500 // group named alice at gid != uid (UPG needs 3001)
+	got := Reconcile(d, s, cls())
+	if len(got) != 1 || got[0].Kind != RefuseUser {
+		t.Fatalf("UPG name/gid mismatch => RefuseUser, got %v", kinds(got))
+	}
+}
+
+func TestOrphanInvalidNameSkipped(t *testing.T) {
+	// A scanned account with an unsafe name must never reach an exec argument.
+	d := &roster.Roster{}
+	s := activeState(state.User{Name: "-x", UID: 3009}, true)
+	got := Reconcile(d, s, cls())
+	if hasKind(got, DisableUser) || hasKind(got, OrphanUser) {
+		t.Fatalf("invalid scanned name must be skipped, got %v", kinds(got))
+	}
+}

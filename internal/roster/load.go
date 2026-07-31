@@ -11,14 +11,21 @@ import (
 	"github.com/lesomnus/usersync/internal/idrange"
 )
 
-// reName is a strict POSIX-portable account/group name: lowercase letter or
-// underscore, then lowercase/digit/underscore/hyphen, up to 32 chars. It is safe
-// as a shadow-utils account name AND as a Samba smb.conf section name, and it
-// forbids a leading '-' (which the target CLI would read as a flag), whitespace,
-// '/', '.', and control characters (which could inject smb.conf directives).
-var reName = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+// NamePattern is the strict POSIX-portable account/group name: a lowercase
+// letter or underscore, then lowercase/digit/underscore/hyphen, up to 32 chars.
+// It is safe as a shadow-utils account name AND as a Samba smb.conf section
+// name, and forbids a leading '-' (which the target CLI would read as a flag),
+// whitespace, '/', '.', and control characters (smb.conf directive injection).
+const NamePattern = `^[a-z_][a-z0-9_-]{0,31}$`
+
+var reName = regexp.MustCompile(NamePattern)
 
 func validName(s string) bool { return reName.MatchString(s) }
+
+// ValidName reports whether s is a usersync-manageable account/group name (safe
+// as a CLI arg and an smb.conf section). Exported so callers that take a name
+// from argv or a system scan can guard it before it reaches an exec argument.
+func ValidName(s string) bool { return validName(s) }
 
 // hasControlOrNewline reports whether s contains any control character (incl.
 // newline/CR/tab), which must never reach a command argument or smb.conf.

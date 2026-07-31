@@ -46,13 +46,22 @@ type State struct {
 	Users  map[string]User
 	Groups map[string]Group
 	Smb    map[string]Smb
+
+	// AllUsers/AllGroups map EVERY scanned account name (managed OR not) to its
+	// id. They let the reconciler refuse creating a managed entry whose name
+	// collides with a pre-existing out-of-range account/group (which the managed
+	// Users/Groups maps hide), so a create never lands on someone else's account.
+	AllUsers  map[string]uint32
+	AllGroups map[string]uint32
 }
 
 // New returns an empty State with initialized maps.
 func New() *State {
 	return &State{
-		Users:  map[string]User{},
-		Groups: map[string]Group{},
-		Smb:    map[string]Smb{},
+		Users:     map[string]User{},
+		Groups:    map[string]Group{},
+		Smb:       map[string]Smb{},
+		AllUsers:  map[string]uint32{},
+		AllGroups: map[string]uint32{},
 	}
 }

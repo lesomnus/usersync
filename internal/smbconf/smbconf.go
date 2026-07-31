@@ -56,7 +56,7 @@ func Render(groups []roster.Group, groupsBase string) string {
 		}
 		fmt.Fprintf(&b, "\n[%s]\n", name)
 		fmt.Fprintf(&b, "   comment = %s\n", comment)
-		fmt.Fprintf(&b, "   path = %s\n", filepath.Join(groupsBase, name))
+		fmt.Fprintf(&b, "   path = %s\n", oneLine(filepath.Join(groupsBase, name)))
 		b.WriteString("   browseable = yes\n")
 		b.WriteString("   read only = no\n")
 		fmt.Fprintf(&b, "   valid users = @%s\n", name)

@@ -32,7 +32,9 @@ func NewCmdApply() *xli.Command {
 			defer unlock()
 
 			c := use_config.Must(ctx)
-			applyCommonFlags(cmd, c)
+			if err := applyCommonFlags(cmd, c); err != nil {
+				return err
+			}
 			cls := c.Classifier()
 
 			ro, skipped, err := loadRoster(cmd, c, cls)

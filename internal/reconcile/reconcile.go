@@ -184,6 +184,11 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		cur, ok := actual.Groups[g.Name]
 		switch {
 		case !ok:
+			if _, exists := actual.AllGroups[g.Name]; exists {
+				out = append(out, Action{Kind: RefuseGroup, Name: g.Name, GID: g.GID,
+					Reason: "a group with this name already exists outside the managed range — reconcile it manually"})
+				break
+			}
 			if owner, held := gidOwner[g.GID]; held && owner != g.Name {
 				out = append(out, Action{Kind: RefuseGroup, Name: g.Name, GID: g.GID,
 					Reason: reasonf("gid %d already held by group %q", g.GID, owner)})
@@ -228,6 +233,11 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		if cls.UID(au.UID) != idrange.Managed {
 			continue
 		}
+		// A scanned name that isn't a valid account name (e.g. "-x" from a direct
+		// /etc/passwd edit or an NSS source) must never reach an exec argument.
+		if !roster.ValidName(name) {
+			continue
+		}
 		// Always surface an orphan as a standing Notice (so a hand-created account
 		// is not a monitoring blind spot), and disable its SMB if still enabled.
 		out = append(out, Action{Kind: OrphanUser, Name: name, UID: au.UID,
@@ -253,10 +263,21 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier, 
 			Reason: reasonf("uid %d desired, %d actual — change is manual", u.UID, cur.UID)}}
 	}
 
-	// Cross-name collision: the desired uid (or its UPG gid == uid) is already
-	// held by a different account/group. Refuse instead of letting useradd/
-	// groupadd fail cryptically. Only relevant when we would create the account.
+	// Collisions on the create path. Refuse instead of silently mutating someone
+	// else's account or letting useradd/groupadd fail cryptically.
 	if !present && u.Status != roster.Reserved {
+		// A pre-existing account with this name but an out-of-range uid is hidden
+		// from managed Users, so `present` is false — a create would land on it
+		// (usermod -G / -L on the wrong account). Refuse.
+		if _, exists := actual.AllUsers[u.Name]; exists {
+			return []Action{{Kind: RefuseUser, Name: u.Name, UID: u.UID, Status: u.Status,
+				Reason: "an account with this name already exists outside the managed range — reconcile it manually"}}
+		}
+		// A pre-existing group with this name whose gid != uid can't be the UPG.
+		if gid, exists := actual.AllGroups[u.Name]; exists && gid != u.UID {
+			return []Action{{Kind: RefuseUser, Name: u.Name, UID: u.UID, Status: u.Status,
+				Reason: reasonf("a group named %q (gid %d) already exists; the UPG needs gid == uid %d", u.Name, gid, u.UID)}}
+		}
 		if owner, ok := uidOwner[u.UID]; ok && owner != u.Name {
 			return []Action{{Kind: RefuseUser, Name: u.Name, UID: u.UID, Status: u.Status,
 				Reason: reasonf("uid %d already held by %q — reserve or purge it before reusing", u.UID, owner)}}

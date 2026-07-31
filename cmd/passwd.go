@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/xli"
 	"github.com/lesomnus/xli/arg"
 	"github.com/lesomnus/xli/flg"
@@ -25,11 +27,15 @@ func NewCmdPasswd() *xli.Command {
 			c := use_config.Must(ctx)
 			flg.VisitP(cmd, "seed-file", &c.SeedFile)
 
+			user := arg.MustGet[string](cmd, "user")
+			if !roster.ValidName(user) {
+				return fmt.Errorf("invalid user name %q (must match %s)", user, roster.NamePattern)
+			}
 			der, err := deriver(c)
 			if err != nil {
 				return err
 			}
-			cmd.Println(der.InitPW(arg.MustGet[string](cmd, "user")))
+			cmd.Println(der.InitPW(user))
 			return nil
 		}),
 	}

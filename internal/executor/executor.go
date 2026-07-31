@@ -56,6 +56,14 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 	}
 
 	out := state.New()
+	// Record every scanned name (managed or not) so the reconciler can refuse a
+	// create that would collide with a pre-existing out-of-range account/group.
+	for name, u := range raw.Users {
+		out.AllUsers[name] = u.UID
+	}
+	for name, g := range raw.Groups {
+		out.AllGroups[name] = g.GID
+	}
 	for name, u := range raw.Users {
 		if cls.UID(u.UID) != idrange.Managed {
 			continue

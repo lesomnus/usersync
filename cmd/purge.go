@@ -48,6 +48,9 @@ func NewCmdPurge() *xli.Command {
 			c := use_config.Must(ctx)
 			cls := c.Classifier()
 			user := arg.MustGet[string](cmd, "user")
+			if !roster.ValidName(user) {
+				return fmt.Errorf("invalid user name %q (must match %s)", user, roster.NamePattern)
+			}
 
 			uid, home, err := lookupUser(ctx, user)
 			if err != nil {

@@ -22,6 +22,7 @@ func TestValidateRejects(t *testing.T) {
 		"floor above window":     func(c *Config) { c.Protect.SystemFloor = 100000 },
 		"overlapping uid/gid":    func(c *Config) { c.Manage.GID.Min, c.Manage.GID.Max = 3000, 6999 },
 		"relative home path":     func(c *Config) { c.Paths.Home = "research/home" },
+		"newline in groups path": func(c *Config) { c.Paths.Groups = "/srv/g\n[evil]" },
 		"bad on_out_of_scope":    func(c *Config) { c.OnOutOfScope = "nope" },
 		"unknown provider":       func(c *Config) { c.Provider = "adduser" },
 	}

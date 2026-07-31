@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/goccy/go-yaml"
 	"github.com/lesomnus/usersync/internal/idrange"
@@ -155,6 +156,9 @@ func (c *Config) Validate() error {
 	for _, p := range []struct{ name, val string }{{"paths.home", c.Paths.Home}, {"paths.groups", c.Paths.Groups}} {
 		if !filepath.IsAbs(p.val) {
 			return fmt.Errorf("%s must be an absolute path, got %q", p.name, p.val)
+		}
+		if i := strings.IndexFunc(p.val, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
+			return fmt.Errorf("%s must not contain control/newline characters", p.name)
 		}
 	}
 	switch c.OnOutOfScope {

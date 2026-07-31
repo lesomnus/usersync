@@ -37,8 +37,10 @@ func commonFlags() flg.Flags {
 	}
 }
 
-// applyCommonFlags overlays flag values onto the loaded config (flags win when set).
-func applyCommonFlags(cmd *xli.Command, c *config.Config) {
+// applyCommonFlags overlays flag values onto the loaded config (flags win when
+// set) and re-validates, so a flag (e.g. a relative --home-base) cannot slip a
+// bad value past the load-time Config.Validate.
+func applyCommonFlags(cmd *xli.Command, c *config.Config) error {
 	flg.VisitP(cmd, "home-base", &c.Paths.Home)
 	flg.VisitP(cmd, "groups-base", &c.Paths.Groups)
 	flg.VisitP(cmd, "seed-file", &c.SeedFile)
@@ -47,6 +49,7 @@ func applyCommonFlags(cmd *xli.Command, c *config.Config) {
 			c.OnOutOfScope = "skip"
 		}
 	})
+	return c.Validate()
 }
 
 func jsonRequested(cmd *xli.Command) bool {

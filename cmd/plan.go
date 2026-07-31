@@ -24,7 +24,9 @@ func NewCmdPlan() *xli.Command {
 
 		Handler: xli.OnRun(func(ctx context.Context, cmd *xli.Command, next xli.Next) error {
 			c := use_config.Must(ctx)
-			applyCommonFlags(cmd, c)
+			if err := applyCommonFlags(cmd, c); err != nil {
+				return err
+			}
 			cls := c.Classifier()
 
 			ro, skipped, err := loadRoster(cmd, c, cls)

@@ -4,11 +4,32 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/goccy/go-yaml"
 	"github.com/lesomnus/usersync/internal/idrange"
 )
+
+// reName is a strict POSIX-portable account/group name: lowercase letter or
+// underscore, then lowercase/digit/underscore/hyphen, up to 32 chars. It is safe
+// as a shadow-utils account name AND as a Samba smb.conf section name, and it
+// forbids a leading '-' (which the target CLI would read as a flag), whitespace,
+// '/', '.', and control characters (which could inject smb.conf directives).
+var reName = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+func validName(s string) bool { return reName.MatchString(s) }
+
+// hasControlOrNewline reports whether s contains any control character (incl.
+// newline/CR/tab), which must never reach a command argument or smb.conf.
+func hasControlOrNewline(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
 
 // Policy decides how an out-of-scope (neither managed nor protected) entry is
 // handled during validation.
@@ -66,8 +87,11 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	seenGroupName := map[string]bool{}
 	seenGID := map[uint32]string{}
 	for _, g := range ro.Groups {
-		if g.Name == "" {
-			errs = append(errs, fmt.Errorf("group with empty name"))
+		if !validName(g.Name) {
+			errs = append(errs, fmt.Errorf("invalid group name %q (must match %s)", g.Name, reName))
+		}
+		if hasControlOrNewline(g.Description) {
+			errs = append(errs, fmt.Errorf("group %q description must be a single line (no control/newline chars)", g.Name))
 		}
 		if seenGroupName[g.Name] {
 			errs = append(errs, fmt.Errorf("duplicate group name %q", g.Name))
@@ -83,8 +107,8 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	seenUserName := map[string]bool{}
 	seenUID := map[uint32]string{}
 	for _, u := range ro.Users {
-		if u.Name == "" {
-			errs = append(errs, fmt.Errorf("user with empty name"))
+		if !validName(u.Name) {
+			errs = append(errs, fmt.Errorf("invalid user name %q (must match %s)", u.Name, reName))
 		}
 		if seenUserName[u.Name] {
 			errs = append(errs, fmt.Errorf("duplicate user name %q", u.Name))
@@ -97,6 +121,9 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 		}
 		if i := strings.IndexAny(u.FullName, ",:"); i >= 0 {
 			errs = append(errs, fmt.Errorf("user %q full_name contains forbidden %q (GECOS separator)", u.Name, u.FullName[i]))
+		}
+		if hasControlOrNewline(u.FullName) {
+			errs = append(errs, fmt.Errorf("user %q full_name must be a single line (no control/newline chars)", u.Name))
 		}
 	}
 

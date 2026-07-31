@@ -41,6 +41,7 @@ target "app" {
   dockerfile = "../Dockerfile"
   labels = {
     "org.opencontainers.image.title"         = "usersync",
+    "org.opencontainers.image.licenses"      = "Apache-2.0",
     # "org.opencontainers.image.description"   = "",
     # "org.opencontainers.image.documentation" = "",
     "org.opencontainers.image.url"           = "https://github.com/lesomnus/usersync",

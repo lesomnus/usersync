@@ -51,8 +51,11 @@ func (b *busybox) EnsureUser(ctx context.Context, u UserSpec) error {
 	if b.present(ctx, "passwd", u.Name) {
 		return nil
 	}
-	if _, err := b.r.Run(ctx, "", "addgroup", "-g", u32(u.UID), u.Name); err != nil {
-		return fmt.Errorf("addgroup %s: %w", u.Name, err)
+	// Create the UPG only if absent, so a retry after an interrupted apply is idempotent.
+	if !b.present(ctx, "group", u.Name) {
+		if _, err := b.r.Run(ctx, "", "addgroup", "-g", u32(u.UID), u.Name); err != nil {
+			return fmt.Errorf("addgroup %s: %w", u.Name, err)
+		}
 	}
 	if _, err := b.r.Run(ctx, "", "adduser",
 		"-u", u32(u.UID),

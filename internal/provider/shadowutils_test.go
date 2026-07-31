@@ -143,6 +143,7 @@ func TestShadowUtilsCommands(t *testing.T) {
 			},
 			want: []string{
 				"getent passwd alice",
+				"getent group alice",
 				"groupadd -g 1000 alice",
 				"useradd -u 1000 -g 1000 -M -d /home/alice -s /bin/bash -c Alice A alice",
 			},

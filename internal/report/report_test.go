@@ -39,7 +39,7 @@ func TestText(t *testing.T) {
 		"+ create-user alice uid=3001 groups=[staff,dev]",
 		"~ update-user-groups bob uid=3002 groups=[staff]",
 		"! refuse-user carol uid=500 (uid not in managed range)",
-		"- orphan-user dave uid=3003",
+		"· orphan-user dave uid=3003",
 		"· skip user eve (uid out of manage scope)",
 		"Summary:",
 		"create-user=1",

@@ -159,7 +159,7 @@ func (s stack) apply(t *testing.T, ro *roster.Roster) {
 	if _, err := ro.Validate(s.cls, roster.PolicyError); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if err := s.deps.Apply(context.Background(), reconcile.Reconcile(ro, s.collect(t), s.cls)); err != nil {
+	if _, err := s.deps.Apply(context.Background(), reconcile.Reconcile(ro, s.collect(t), s.cls)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 }
@@ -433,4 +433,39 @@ func changeCount(as []reconcile.Action) int {
 		}
 	}
 	return n
+}
+
+// TestPreservesProtectedGroupOnUpdate proves the blocker fix end-to-end: a
+// managed user's membership in a protected/out-of-scope group survives a
+// supplementary-group update triggered by a roster change.
+func TestPreservesProtectedGroupOnUpdate(t *testing.T) {
+	requireRootAndTools(t)
+	s := setup(t)
+	s.apply(t, fullRoster()) // skim in team-a
+
+	// Put skim into a protected group (gid 900) out of band.
+	_ = exec.Command("groupadd", "-g", "900", "extra").Run()
+	t.Cleanup(func() { _ = exec.Command("groupdel", "extra").Run() })
+	if out, err := exec.Command("usermod", "-aG", "extra", "skim").CombinedOutput(); err != nil {
+		t.Fatalf("usermod -aG extra skim: %v\n%s", err, out)
+	}
+
+	// Roster change (skim gains team-b) fires a supplementary-group update.
+	s.apply(t, &roster.Roster{
+		Groups: []roster.Group{{Name: "team-a", GID: 7001}, {Name: "team-b", GID: 7002}},
+		Users: []roster.User{
+			{Name: "skim", UID: 3001, Groups: []string{"team-a", "team-b"}},
+			{Name: "park", UID: 3004, Status: roster.Disabled},
+		},
+	})
+
+	out, err := exec.Command("id", "-nG", "skim").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"extra", "team-a", "team-b"} {
+		if !slices.Contains(strings.Fields(string(out)), want) {
+			t.Errorf("skim must remain in %q after the update, got %q", want, string(out))
+		}
+	}
 }

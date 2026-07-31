@@ -50,8 +50,11 @@ func (p *pw) EnsureUser(ctx context.Context, u UserSpec) error {
 	if p.present(ctx, "usershow", u.Name) {
 		return nil
 	}
-	if _, err := p.r.Run(ctx, "", "pw", "groupadd", "-n", u.Name, "-g", u32(u.UID)); err != nil {
-		return fmt.Errorf("pw groupadd %s: %w", u.Name, err)
+	// Create the UPG only if absent, so a retry after an interrupted apply is idempotent.
+	if !p.present(ctx, "groupshow", u.Name) {
+		if _, err := p.r.Run(ctx, "", "pw", "groupadd", "-n", u.Name, "-g", u32(u.UID)); err != nil {
+			return fmt.Errorf("pw groupadd %s: %w", u.Name, err)
+		}
 	}
 	if _, err := p.r.Run(ctx, "", "pw", "useradd",
 		"-n", u.Name,

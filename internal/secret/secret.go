@@ -66,6 +66,13 @@ func LoadSeed(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read seed file %q: %w", path, err)
 	}
+	// Warn (never fail) if the seed file is readable by group/other; it should
+	// be 0600 so the derived passwords cannot be recomputed by other accounts.
+	if fi, err := os.Stat(path); err == nil {
+		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+			fmt.Fprintf(os.Stderr, "warning: seed file %q is accessible to group/other (%04o); recommend chmod 600\n", path, perm)
+		}
+	}
 	b = []byte(strings.TrimSpace(string(b)))
 	if len(b) == 0 {
 		return nil, fmt.Errorf("seed file %q is empty", path)

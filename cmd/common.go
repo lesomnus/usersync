@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/lesomnus/usersync/cmd/config"
 	"github.com/lesomnus/usersync/internal/executor"
@@ -104,6 +106,28 @@ func requireRoot() error {
 		return fmt.Errorf("must run as root (euid 0)")
 	}
 	return nil
+}
+
+// lockRun takes an exclusive, non-blocking advisory lock so two mutating runs
+// (apply/purge/shares --write) cannot race. It returns a release func to defer.
+func lockRun() (func(), error) {
+	path := "/run/usersync.lock"
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		path = filepath.Join(os.TempDir(), "usersync.lock")
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("open lock file: %w", err)
+		}
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another usersync run is in progress (lock %s)", path)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // errW returns the command's stderr, defaulting to os.Stderr.

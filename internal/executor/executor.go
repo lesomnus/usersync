@@ -60,6 +60,19 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 		if cls.UID(u.UID) != idrange.Managed {
 			continue
 		}
+		// Split supplementary memberships: managed groups are reconciled against
+		// the roster; memberships in non-managed groups (e.g. docker, sudo, or any
+		// group below system_floor or outside the manage window) are preserved so a
+		// group update never strips them — honoring "protect ranges are never touched".
+		var managed, extra []string
+		for _, gn := range u.Groups {
+			if g, ok := raw.Groups[gn]; ok && cls.GID(g.GID) == idrange.Managed {
+				managed = append(managed, gn)
+			} else {
+				extra = append(extra, gn)
+			}
+		}
+		u.Groups, u.ExtraGroups = managed, extra
 		if opts.FS != nil {
 			u.HomeExists, u.HomePerm, u.HomeUID, u.HomeGID = opts.FS.Stat(filepath.Join(opts.HomeBase, name))
 		}
@@ -99,16 +112,19 @@ func (d Deps) shell() string {
 }
 
 // Apply executes each action. A failing action is recorded and the rest still
-// run, so one bad entry does not block the whole roster; the joined error is
-// returned at the end. Refuse/orphan-group actions are report-only (no-ops).
-func (d Deps) Apply(ctx context.Context, actions []reconcile.Action) error {
-	var errs []error
-	for _, a := range actions {
+// run, so one bad entry does not block the whole roster. It returns a per-action
+// error slice (index-aligned with actions; nil == success/no-op) so the report
+// can reflect what actually happened, plus the joined error of all failures.
+func (d Deps) Apply(ctx context.Context, actions []reconcile.Action) ([]error, error) {
+	results := make([]error, len(actions))
+	var failed []error
+	for i, a := range actions {
 		if err := d.one(ctx, a); err != nil {
-			errs = append(errs, fmt.Errorf("%s %s: %w", a.Kind, a.Name, err))
+			results[i] = err
+			failed = append(failed, fmt.Errorf("%s %s: %w", a.Kind, a.Name, err))
 		}
 	}
-	return errors.Join(errs...)
+	return results, errors.Join(failed...)
 }
 
 func (d Deps) one(ctx context.Context, a reconcile.Action) error {
@@ -143,14 +159,12 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 	case reconcile.EnableUser:
 		return d.Samba.Enable(ctx, a.Name)
 
-	case reconcile.DisableUser, reconcile.OrphanUser:
+	case reconcile.DisableUser:
 		return d.Samba.Disable(ctx, a.Name)
 
-	case reconcile.ReservedPresent:
-		return nil // standing notice; no mutation
-
-	case reconcile.RefuseUser, reconcile.RefuseGroup, reconcile.OrphanGroup:
-		return nil // report-only; no mutation
+	case reconcile.ReservedPresent, reconcile.OrphanUser,
+		reconcile.RefuseUser, reconcile.RefuseGroup, reconcile.OrphanGroup:
+		return nil // report-only / notice; no mutation
 
 	default:
 		return fmt.Errorf("unhandled action kind %v", a.Kind)

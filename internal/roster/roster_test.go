@@ -199,3 +199,34 @@ func TestOutOfScopeErrorVsSkip(t *testing.T) {
 		t.Fatalf("kept users = %v, want [ok]", ro.Users)
 	}
 }
+
+func TestInvalidNamesRejected(t *testing.T) {
+	for _, bad := range []string{"Team A", "1skim", "UPPER", "-x", "a/b", "x[y]", "a b", "x\ny", ""} {
+		ro := &Roster{Users: []User{{Name: bad, UID: 3001}}}
+		if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
+			t.Errorf("user name %q must be rejected", bad)
+		}
+		rg := &Roster{Groups: []Group{{Name: bad, GID: 7001}}}
+		if _, err := rg.Validate(testClassifier(), PolicyError); err == nil {
+			t.Errorf("group name %q must be rejected", bad)
+		}
+	}
+	// valid names pass the name check.
+	ok := &Roster{Groups: []Group{{Name: "team-a", GID: 7001}}, Users: []User{{Name: "s_kim", UID: 3001}}}
+	if _, err := ok.Validate(testClassifier(), PolicyError); err != nil {
+		t.Errorf("valid names must pass: %v", err)
+	}
+}
+
+func TestNewlineInjectionRejected(t *testing.T) {
+	// A group description with a newline could inject an smb.conf directive.
+	rg := &Roster{Groups: []Group{{Name: "team-a", GID: 7001, Description: "x\n[public]\n path = /"}}}
+	if _, err := rg.Validate(testClassifier(), PolicyError); err == nil {
+		t.Error("group description with a newline must be rejected")
+	}
+	// full_name with a newline likewise.
+	ru := &Roster{Users: []User{{Name: "skim", UID: 3001, FullName: "a\nb"}}}
+	if _, err := ru.Validate(testClassifier(), PolicyError); err == nil {
+		t.Error("full_name with a newline must be rejected")
+	}
+}

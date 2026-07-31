@@ -13,7 +13,7 @@ import (
 func NewCmdShares() *xli.Command {
 	return &xli.Command{
 		Name:  "shares",
-		Brief: "generate smb.conf share definitions from the roster (Phase 2)",
+		Brief: "generate smb.conf share definitions from the roster",
 		Synop: "Renders the [homes] + per-team [<team>] share block from the roster groups. By default prints it (dry-run); with --write it splices the block into smb.conf between markers (validating with testparm and keeping a .bak), and --reload reloads smbd.",
 
 		Flags: flg.Flags{
@@ -45,6 +45,12 @@ func NewCmdShares() *xli.Command {
 			if err := requireRoot(); err != nil {
 				return err
 			}
+			unlock, err := lockRun()
+			if err != nil {
+				return err
+			}
+			defer unlock()
+
 			path := "/etc/samba/smb.conf"
 			if p, ok := flg.Get[string](cmd, "smb-conf"); ok && p != "" {
 				path = p

@@ -52,6 +52,7 @@ func TestBusyboxCommands(t *testing.T) {
 			},
 			want: []string{
 				"getent passwd alice",
+				"getent group alice",
 				"addgroup -g 1000 alice",
 				"adduser -u 1000 -h /home/alice -s /bin/sh -G alice -g Alice A -D -H alice",
 			},

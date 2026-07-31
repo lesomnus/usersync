@@ -341,7 +341,7 @@ usersync export   # 현재 시스템 상태(관리 범위)를 roster.yaml 포맷
 usersync purge <user>   # 명시적 완전 삭제(위험): 홈 tar 아카이브 → smbpasswd -x → userdel → groupdel(UPG)
 ```
 > `purge` 후에는 그 uid/name 을 `status: reserved` 로 roster 에 남기는 것을 권장(재사용 차단, §4 생명주기).
-> `--reserve`(기본 on)면 purge 가 roster 에 reserved tombstone 항목을 자동 추가; `--no-reserve` 로 끌 수 있다.
+> purge 는 기본으로 reserved tombstone **스니펫을 출력**(붙여넣기 → 주석 보존). `--reserve` 를 주면 roster 파일에 직접 기록(주석/서식 손실).
 
 ### `export` — 실제 상태 → 우리 포맷 (역방향)
 - 시스템의 실제 사용자/그룹을 **관리 범위 안에서** `Scan`(§9, `getent`+`pdbedit`)으로 수집해 `roster.yaml`을 **stdout으로** 출력. `> roster.yaml`로 저장.
@@ -510,7 +510,14 @@ type Samba interface {
   - **purge 데이터손실 차단**: 홈 아카이브 실패 시 삭제 중단 + GECOS 콜론 홈 파싱(끝 기준 앵커).
   - **범위 밖 그룹 참조**: 사용자 보조그룹은 *유지된* 그룹 기준 검증(skip 시 dangling 방지).
   - **비-root export**: pdbedit 실패를 경고로 강등, 유저/그룹은 계속 출력.
-  - **reserved 잔존 상시 알림**(Notice), `--no-reserve` 구현. createUser 홈을 계정 직후 생성(부분실패 대비).
+  - **reserved 잔존 상시 알림**(Notice). createUser 홈을 계정 직후 생성(부분실패 대비).
+- ✅ **1.0 릴리즈 리뷰 라운드**: 6차원 전수 리뷰(31건 제기, 7 오탐) → 블로커 5 + 확정 다수 수정.
+  - **smb.conf 인젝션 차단(치명)**: user/group 이름을 `^[a-z_][a-z0-9_-]{0,31}$`로 검증, description/full_name 개행·제어문자 거부, `smbconf.Render`가 개행 최종 방어. (이름 무검증 시 description 개행으로 루트 `/` guest 공유 주입 가능했음.)
+  - **보호그룹 멤버십 보존**: `Collect`가 보조그룹을 관리/비관리로 분리(`ExtraGroups`), 그룹 업데이트가 docker/sudo 등 비관리 멤버십을 **치환으로 날리지 않음**(union). 실검증 `TestPreservesProtectedGroupOnUpdate`(shadow+busybox).
+  - **UPG groupadd 멱등화**(3 provider): 중단된 apply 재시도 안전.
+  - **설정 검증**(`Config.Validate`): 역전 범위·floor>창·uid/gid 창 겹침·상대경로·잘못된 enum 로드 시 거부.
+  - **mode 드리프트 보정**: 홈 `0700`/폴더 `2770 setgid` 어긋나면 재보정.
+  - **교차 이름 uid/gid 충돌** 감지 → RefuseUser/RefuseGroup(cryptic apply 실패 방지). **orphan 상시 Notice**. **apply 리포트가 실행 결과 반영**(✗ FAILED). **동시 실행 락**(flock). **provider auto가 BSD면 pw 우선**. LICENSE(Apache-2.0), CI lint(gofmt+vet) 게이트, purge `--reserve` 옵트인(주석 보존), seed 파일 권한 경고, 버전 `ReadBuildInfo` 폴백.
 - 🚧 **남음**: 파일 서버 실배포. (pw 실검증은 FreeBSD 호스트 필요 — Linux CI 불가.)
 
 **0단계 — 스캐폴딩 정리**

@@ -6,13 +6,14 @@ package state
 
 // User is an actual unix user account within the managed range.
 type User struct {
-	Name     string
-	UID      uint32
-	GID      uint32   // primary group id
-	Groups   []string // supplementary group names
-	FullName string   // GECOS display name
-	Home     string
-	Shell    string
+	Name        string
+	UID         uint32
+	GID         uint32   // primary group id
+	Groups      []string // MANAGED supplementary group names (compared against the roster)
+	ExtraGroups []string // supplementary memberships in NON-managed groups, preserved on update
+	FullName    string   // GECOS display name
+	Home        string
+	Shell       string
 
 	// Home directory observation (via fsops.Stat), used to heal a missing or
 	// drifted home. HomePerm folds the setgid bit in as 0o2000.

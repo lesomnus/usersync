@@ -82,10 +82,23 @@ jobs:
               go test -tags integration -v ./internal/integration/
             '
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+
   # Only push the image when the build/unit tests AND both integration suites
   # (shadow-utils + busybox) pass — a failing test must not publish an image.
   push:
-    needs: [build, integration, integration-busybox]
+    needs: [build, integration, integration-busybox, lint]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:

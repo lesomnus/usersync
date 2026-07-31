@@ -76,6 +76,9 @@ func UseConfigInit(ctx context.Context, cmd *xli.Command) (context.Context, *con
 	if err := c.Evaluate(); err != nil {
 		return nil, nil, z.Err(err, "evaluate config")
 	}
+	if err := c.Validate(); err != nil {
+		return nil, nil, z.Err(err, "invalid config")
+	}
 
 	ctx = use_config.Into(ctx, c)
 	return ctx, c, nil

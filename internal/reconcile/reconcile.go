@@ -15,6 +15,29 @@ import (
 
 func reasonf(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
+// mergeGroups returns the sorted, de-duplicated union of the desired managed
+// groups and the preserved non-managed memberships, so a supplementary-group
+// update replaces the set WITHOUT dropping memberships in protected/out-of-scope
+// groups (e.g. docker, sudo).
+func mergeGroups(desired, preserved []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, g := range desired {
+		if !seen[g] {
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	for _, g := range preserved {
+		if !seen[g] {
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // homeDrifted reports whether a present user's home directory is missing or has
 // drifted from the desired 0700 owned by its UPG (uid == gid == UID).
 func homeDrifted(u roster.User, cur state.User) bool {
@@ -65,7 +88,7 @@ func (k Kind) Class() Class {
 	switch k {
 	case RefuseGroup, RefuseUser:
 		return Refuse
-	case OrphanGroup, ReservedPresent:
+	case OrphanGroup, OrphanUser, ReservedPresent:
 		return Notice
 	default:
 		return Change
@@ -141,6 +164,17 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		desiredUserNames[u.Name] = true
 	}
 
+	// Reverse indexes to detect a desired id already held by a DIFFERENT name
+	// (would make the create's useradd/groupadd fail cryptically).
+	uidOwner := map[uint32]string{}
+	for n, u := range actual.Users {
+		uidOwner[u.UID] = n
+	}
+	gidOwner := map[uint32]string{}
+	for n, g := range actual.Groups {
+		gidOwner[g.GID] = n
+	}
+
 	// --- groups ---
 	for _, g := range desiredGroups {
 		if cls.GID(g.GID) != idrange.Managed {
@@ -150,6 +184,11 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		cur, ok := actual.Groups[g.Name]
 		switch {
 		case !ok:
+			if owner, held := gidOwner[g.GID]; held && owner != g.Name {
+				out = append(out, Action{Kind: RefuseGroup, Name: g.Name, GID: g.GID,
+					Reason: reasonf("gid %d already held by group %q", g.GID, owner)})
+				break
+			}
 			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, Reason: g.Description})
 		case cur.GID != g.GID:
 			out = append(out, Action{Kind: RefuseGroup, Name: g.Name, GID: g.GID,
@@ -165,7 +204,7 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 
 	// --- users ---
 	for _, u := range desiredUsers {
-		out = append(out, reconcileUser(u, actual, cls)...)
+		out = append(out, reconcileUser(u, actual, cls, uidOwner, gidOwner)...)
 	}
 
 	// --- orphan groups (managed, present, not desired) ---
@@ -189,17 +228,19 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		if cls.UID(au.UID) != idrange.Managed {
 			continue
 		}
+		// Always surface an orphan as a standing Notice (so a hand-created account
+		// is not a monitoring blind spot), and disable its SMB if still enabled.
+		out = append(out, Action{Kind: OrphanUser, Name: name, UID: au.UID,
+			Reason: "absent from roster; home kept. Prefer status: disabled/reserved to keep uid reserved"})
 		if sm, ok := actual.Smb[name]; ok && sm.Enabled {
-			out = append(out, Action{Kind: OrphanUser, Name: name, UID: au.UID,
-				Reason: "absent from roster; SMB disabled, home kept. Prefer status: disabled/reserved to keep uid reserved"})
+			out = append(out, Action{Kind: DisableUser, Name: name, UID: au.UID, Reason: "orphan: absent from roster"})
 		}
-		// already disabled / no smb account => steady state, no action.
 	}
 
 	return out
 }
 
-func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) []Action {
+func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier, uidOwner, gidOwner map[uint32]string) []Action {
 	if cls.UID(u.UID) != idrange.Managed {
 		return []Action{{Kind: RefuseUser, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "uid not in managed range"}}
 	}
@@ -210,6 +251,20 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) 
 	if present && cur.UID != u.UID {
 		return []Action{{Kind: RefuseUser, Name: u.Name, UID: u.UID, Status: u.Status,
 			Reason: reasonf("uid %d desired, %d actual — change is manual", u.UID, cur.UID)}}
+	}
+
+	// Cross-name collision: the desired uid (or its UPG gid == uid) is already
+	// held by a different account/group. Refuse instead of letting useradd/
+	// groupadd fail cryptically. Only relevant when we would create the account.
+	if !present && u.Status != roster.Reserved {
+		if owner, ok := uidOwner[u.UID]; ok && owner != u.Name {
+			return []Action{{Kind: RefuseUser, Name: u.Name, UID: u.UID, Status: u.Status,
+				Reason: reasonf("uid %d already held by %q — reserve or purge it before reusing", u.UID, owner)}}
+		}
+		if owner, ok := gidOwner[u.UID]; ok && owner != u.Name {
+			return []Action{{Kind: RefuseUser, Name: u.Name, UID: u.UID, Status: u.Status,
+				Reason: reasonf("UPG gid %d already held by group %q", u.UID, owner)}}
+		}
 	}
 
 	switch u.Status {
@@ -234,7 +289,7 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) 
 		}
 		var out []Action
 		if !sameGroupSet(u.Groups, cur.Groups) {
-			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: u.Groups, Status: u.Status})
+			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: mergeGroups(u.Groups, cur.ExtraGroups), Status: u.Status})
 		}
 		if homeDrifted(u, cur) {
 			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing or wrong perms"})
@@ -251,7 +306,7 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) 
 		}
 		var out []Action
 		if !sameGroupSet(u.Groups, cur.Groups) {
-			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: u.Groups, Status: u.Status})
+			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: mergeGroups(u.Groups, cur.ExtraGroups), Status: u.Status})
 		}
 		if homeDrifted(u, cur) {
 			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing or wrong perms"})

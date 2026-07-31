@@ -23,6 +23,12 @@ const (
 	EndMarker   = "# <<< usersync-shares <<<"
 )
 
+// oneLine collapses any CR/LF to a space so a value can never splice a new
+// directive or section into the managed block.
+func oneLine(s string) string {
+	return strings.NewReplacer("\n", " ", "\r", " ").Replace(s)
+}
+
 // Render builds the managed block (markers included) from the roster groups. It
 // emits a single [homes] section plus one [<team>] section per group, sorted by
 // name for deterministic output. groupsBase is the group folder root.
@@ -41,17 +47,20 @@ func Render(groups []roster.Group, groupsBase string) string {
 	b.WriteString("   valid users = %S\n")
 
 	for _, g := range gs {
-		comment := g.Description
+		// Defense-in-depth: names/descriptions are validated at roster load, but
+		// never let a stray newline/CR splice a directive into the config file.
+		name := oneLine(g.Name)
+		comment := oneLine(g.Description)
 		if comment == "" {
-			comment = g.Name + " shared"
+			comment = name + " shared"
 		}
-		fmt.Fprintf(&b, "\n[%s]\n", g.Name)
+		fmt.Fprintf(&b, "\n[%s]\n", name)
 		fmt.Fprintf(&b, "   comment = %s\n", comment)
-		fmt.Fprintf(&b, "   path = %s\n", filepath.Join(groupsBase, g.Name))
+		fmt.Fprintf(&b, "   path = %s\n", filepath.Join(groupsBase, name))
 		b.WriteString("   browseable = yes\n")
 		b.WriteString("   read only = no\n")
-		fmt.Fprintf(&b, "   valid users = @%s\n", g.Name)
-		fmt.Fprintf(&b, "   force group = %s\n", g.Name)
+		fmt.Fprintf(&b, "   valid users = @%s\n", name)
+		fmt.Fprintf(&b, "   force group = %s\n", name)
 		b.WriteString("   create mask = 0660\n")
 		b.WriteString("   directory mask = 2770\n")
 	}
@@ -111,6 +120,10 @@ func Apply(ctx context.Context, confPath, groupsBase string, groups []roster.Gro
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", confPath, err)
 	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(confPath); err == nil {
+		mode = fi.Mode().Perm()
+	}
 	updated := Splice(string(orig), Render(groups, groupsBase))
 	if updated == string(orig) {
 		return false, nil
@@ -134,10 +147,10 @@ func Apply(ctx context.Context, confPath, groupsBase string, groups []roster.Gro
 		return false, fmt.Errorf("testparm rejected the generated smb.conf: %w", err)
 	}
 
-	if err := os.WriteFile(confPath+".bak", orig, 0o644); err != nil {
+	if err := os.WriteFile(confPath+".bak", orig, mode); err != nil {
 		return false, fmt.Errorf("write backup: %w", err)
 	}
-	if err := os.WriteFile(confPath, []byte(updated), 0o644); err != nil {
+	if err := os.WriteFile(confPath, []byte(updated), mode); err != nil {
 		return false, fmt.Errorf("write %s: %w", confPath, err)
 	}
 	if reload {

@@ -141,16 +141,21 @@ func TestGIDMismatchRefused(t *testing.T) {
 	}
 }
 
-func TestOrphanUserAutoDisable(t *testing.T) {
+func TestOrphanUserSurfacedAndDisabled(t *testing.T) {
 	d := &roster.Roster{} // roster empty; system has a managed user
+	// enabled orphan => standing Notice + a disable
 	got := Reconcile(d, activeState(state.User{Name: "oldie", UID: 3009}, true), cls())
-	if len(got) != 1 || got[0].Kind != OrphanUser {
-		t.Fatalf("orphan enabled user => OrphanUser, got %v", kinds(got))
+	if len(got) != 2 || got[0].Kind != OrphanUser || got[1].Kind != DisableUser {
+		t.Fatalf("orphan enabled => OrphanUser(notice)+DisableUser, got %v", kinds(got))
 	}
-	// Already-disabled orphan => steady state, no action (idempotent).
+	// Already-disabled orphan => the Notice remains (a hand-created account must
+	// keep being surfaced), but there are 0 Change actions so apply is idempotent.
 	got2 := Reconcile(d, activeState(state.User{Name: "oldie", UID: 3009}, false), cls())
-	if len(got2) != 0 {
-		t.Fatalf("already-disabled orphan => 0 actions, got %v", kinds(got2))
+	if len(got2) != 1 || got2[0].Kind != OrphanUser {
+		t.Fatalf("disabled orphan => standing OrphanUser notice, got %v", kinds(got2))
+	}
+	if got2[0].Kind.Class() != Notice || countChange(got2) != 0 {
+		t.Errorf("disabled orphan must be a Notice with 0 Change actions, got %d change", countChange(got2))
 	}
 }
 
@@ -307,5 +312,45 @@ func TestGroupFolderPermDrift(t *testing.T) {
 	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true, FolderPerm: 0o770, FolderGID: 7001}
 	if got := Reconcile(d, s, cls()); len(got) != 1 || got[0].Kind != CreateGroup {
 		t.Fatalf("folder perm drift => CreateGroup heal, got %v", kinds(got))
+	}
+}
+
+func TestPreservesNonManagedGroups(t *testing.T) {
+	// skim is in team-a (managed) and docker (non-managed, preserved). A managed
+	// group change must NOT strip docker.
+	d := &roster.Roster{
+		Groups: []roster.Group{{Name: "team-a", GID: 7001}, {Name: "team-b", GID: 7002}},
+		Users:  []roster.User{{Name: "skim", UID: 3001, Groups: []string{"team-a", "team-b"}}},
+	}
+	s := state.New()
+	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7001})
+	s.Groups["team-b"] = okFolder(state.Group{Name: "team-b", GID: 7002})
+	u := okHome(state.User{Name: "skim", UID: 3001, Groups: []string{"team-a"}}) // managed
+	u.ExtraGroups = []string{"docker"}                                           // non-managed, must survive
+	s.Users["skim"] = u
+	s.Smb["skim"] = state.Smb{Name: "skim", Enabled: true}
+
+	got := Reconcile(d, s, cls())
+	if len(got) != 1 || got[0].Kind != UpdateUserGroups {
+		t.Fatalf("want UpdateUserGroups, got %v", kinds(got))
+	}
+	set := map[string]bool{}
+	for _, g := range got[0].Groups {
+		set[g] = true
+	}
+	if !set["docker"] || !set["team-a"] || !set["team-b"] {
+		t.Errorf("update must preserve docker and include team-a+team-b, got %v", got[0].Groups)
+	}
+}
+
+func TestCrossNameUIDCollisionRefused(t *testing.T) {
+	// newbie wants uid 3001, but oldie already holds it.
+	d := &roster.Roster{Users: []roster.User{{Name: "newbie", UID: 3001}}}
+	s := state.New()
+	s.Users["oldie"] = okHome(state.User{Name: "oldie", UID: 3001})
+	got := Reconcile(d, s, cls())
+	// newbie -> RefuseUser; oldie -> orphan notice
+	if !hasKind(got, RefuseUser) {
+		t.Fatalf("uid held by another name => RefuseUser, got %v", kinds(got))
 	}
 }

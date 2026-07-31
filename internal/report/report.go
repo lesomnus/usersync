@@ -22,6 +22,17 @@ type Result struct {
 	DryRun  bool
 	Actions []reconcile.Action
 	Skipped []roster.Skipped
+	// Errors, when set (apply), is index-aligned with Actions: a non-nil entry
+	// means that action failed to execute. nil/empty for a dry-run plan.
+	Errors []error
+}
+
+// actionErr returns the execution error for action i, or nil.
+func (r Result) actionErr(i int) error {
+	if i < len(r.Errors) {
+		return r.Errors[i]
+	}
+	return nil
 }
 
 // Summary counts the actions keyed by their Kind.String(), plus a "skip" entry
@@ -56,8 +67,12 @@ func Text(w io.Writer, r Result) error {
 	} else {
 		b.WriteString("APPLY\n")
 	}
-	for _, a := range r.Actions {
-		fmt.Fprintf(&b, "%s %s %s%s\n", glyph(a.Kind), a.Kind, a.Name, details(a))
+	for i, a := range r.Actions {
+		fmt.Fprintf(&b, "%s %s %s%s", glyph(a.Kind), a.Kind, a.Name, details(a))
+		if err := r.actionErr(i); err != nil {
+			fmt.Fprintf(&b, "  ✗ FAILED: %v", err)
+		}
+		b.WriteByte('\n')
 	}
 	for _, s := range r.Skipped {
 		fmt.Fprintf(&b, "· skip %s %s (%s)\n", s.Kind, s.Name, s.Reason)
@@ -77,8 +92,8 @@ func JSON(w io.Writer, r Result) error {
 		Skipped: make([]jsonSkipped, 0, len(r.Skipped)),
 		Summary: Summary(r),
 	}
-	for _, a := range r.Actions {
-		doc.Actions = append(doc.Actions, jsonAction{
+	for i, a := range r.Actions {
+		ja := jsonAction{
 			Kind:   a.Kind.String(),
 			Name:   a.Name,
 			UID:    a.UID,
@@ -86,7 +101,11 @@ func JSON(w io.Writer, r Result) error {
 			Groups: a.Groups,
 			Status: a.Status.String(),
 			Reason: a.Reason,
-		})
+		}
+		if err := r.actionErr(i); err != nil {
+			ja.Error = err.Error()
+		}
+		doc.Actions = append(doc.Actions, ja)
 	}
 	for _, s := range r.Skipped {
 		doc.Skipped = append(doc.Skipped, jsonSkipped{
@@ -110,6 +129,7 @@ type jsonAction struct {
 	Groups []string `json:"groups"`
 	Status string   `json:"status"`
 	Reason string   `json:"reason"`
+	Error  string   `json:"error,omitempty"`
 }
 
 type jsonSkipped struct {
@@ -136,11 +156,11 @@ func glyph(k reconcile.Kind) string {
 		return "+"
 	case reconcile.UpdateUserGroups:
 		return "~"
-	case reconcile.DisableUser, reconcile.OrphanUser:
+	case reconcile.DisableUser:
 		return "-"
 	case reconcile.RefuseGroup, reconcile.RefuseUser:
 		return "!"
-	case reconcile.OrphanGroup, reconcile.ReservedPresent:
+	case reconcile.OrphanGroup, reconcile.OrphanUser, reconcile.ReservedPresent:
 		return "·"
 	default:
 		return "?"

@@ -58,6 +58,7 @@ func TestPwCommands(t *testing.T) {
 			},
 			want: []string{
 				"pw usershow alice",
+				"pw groupshow alice",
 				"pw groupadd -n alice -g 1000",
 				"pw useradd -n alice -u 1000 -g 1000 -d /home/alice -s /bin/sh -c Alice A",
 			},

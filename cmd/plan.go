@@ -75,6 +75,6 @@ func printCommands(ctx context.Context, cmd *xli.Command, c *config.Config, acti
 		return err
 	}
 	// Errors here are from the print backends (which never fail); ignore.
-	_ = d.Apply(ctx, actions)
+	_, _ = d.Apply(ctx, actions)
 	return nil
 }

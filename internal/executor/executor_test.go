@@ -89,7 +89,7 @@ func run(t *testing.T, actions ...reconcile.Action) []string {
 	t.Helper()
 	var log []string
 	d := newDeps(&log)
-	if err := d.Apply(context.Background(), actions); err != nil {
+	if _, err := d.Apply(context.Background(), actions); err != nil {
 		t.Fatal(err)
 	}
 	return log
@@ -137,7 +137,6 @@ func TestSimpleActions(t *testing.T) {
 		{reconcile.Action{Kind: reconcile.UpdateUserGroups, Name: "jlee", Groups: []string{"team-a", "team-b"}}, "SetGroups(jlee,[team-a,team-b])"},
 		{reconcile.Action{Kind: reconcile.EnableUser, Name: "skim"}, "SmbEnable(skim)"},
 		{reconcile.Action{Kind: reconcile.DisableUser, Name: "park"}, "SmbDisable(park)"},
-		{reconcile.Action{Kind: reconcile.OrphanUser, Name: "oldie"}, "SmbDisable(oldie)"},
 	}
 	for _, tc := range cases {
 		log := run(t, tc.a)
@@ -187,7 +186,7 @@ func TestNoSeedFailsOnCreate(t *testing.T) {
 	var log []string
 	d := newDeps(&log)
 	d.Deriver = nil
-	err := d.Apply(context.Background(), []reconcile.Action{{Kind: reconcile.CreateUser, Name: "skim", UID: 3001}})
+	_, err := d.Apply(context.Background(), []reconcile.Action{{Kind: reconcile.CreateUser, Name: "skim", UID: 3001}})
 	if err == nil {
 		t.Fatal("create without seed must error")
 	}

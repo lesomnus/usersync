@@ -25,6 +25,12 @@ func NewCmdApply() *xli.Command {
 			if err := requireRoot(); err != nil {
 				return err
 			}
+			unlock, err := lockRun()
+			if err != nil {
+				return err
+			}
+			defer unlock()
+
 			c := use_config.Must(ctx)
 			applyCommonFlags(cmd, c)
 			cls := c.Classifier()
@@ -69,7 +75,8 @@ func NewCmdApply() *xli.Command {
 				HomeBase:   c.Paths.Home,
 				GroupsBase: c.Paths.Groups,
 			}
-			applyErr := d.Apply(ctx, actions)
+			results, applyErr := d.Apply(ctx, actions)
+			res.Errors = results // report reflects what actually happened
 
 			if jsonRequested(cmd) {
 				_ = report.JSON(cmd, res)
@@ -88,12 +95,18 @@ func NewCmdApply() *xli.Command {
 	}
 }
 
-// needsSeed reports whether any action will create an SMB account.
+// needsSeed reports whether any action will DERIVE a password (i.e. register a
+// new SMB account). A create whose SMB account already exists (HasSmb) reuses
+// the existing password and needs no seed.
 func needsSeed(actions []reconcile.Action) bool {
 	for _, a := range actions {
 		switch a.Kind {
-		case reconcile.CreateUser, reconcile.CreateUserDisabled, reconcile.AddSmb:
+		case reconcile.AddSmb:
 			return true
+		case reconcile.CreateUser, reconcile.CreateUserDisabled:
+			if !a.HasSmb {
+				return true
+			}
 		}
 	}
 	return false

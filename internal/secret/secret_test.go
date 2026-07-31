@@ -1,10 +1,30 @@
 package secret
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
 )
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what
+// was written there.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	fn()
+
+	w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
 
 func TestInitPWDeterministic(t *testing.T) {
 	d1 := New([]byte("seed-value"))
@@ -80,6 +100,48 @@ func TestLoadSeedFromFile(t *testing.T) {
 	if string(b) != "file-seed" {
 		t.Errorf("got %q, want %q", b, "file-seed")
 	}
+}
+
+func TestLoadSeedFilePermsWarning(t *testing.T) {
+	os.Unsetenv(EnvSeed)
+
+	loadWith := func(t *testing.T, perm os.FileMode) (string, []byte) {
+		t.Helper()
+		f := t.TempDir() + "/seed.secret"
+		if err := os.WriteFile(f, []byte("file-seed\n"), perm); err != nil {
+			t.Fatal(err)
+		}
+		// WriteFile is subject to umask; force the exact bits.
+		if err := os.Chmod(f, perm); err != nil {
+			t.Fatal(err)
+		}
+		var b []byte
+		out := captureStderr(t, func() {
+			var err error
+			b, err = LoadSeed(f)
+			if err != nil {
+				t.Fatalf("LoadSeed(perm %04o) = %v", perm, err)
+			}
+		})
+		if string(b) != "file-seed" {
+			t.Errorf("got %q, want %q", b, "file-seed")
+		}
+		return out, b
+	}
+
+	t.Run("0644 warns", func(t *testing.T) {
+		out, _ := loadWith(t, 0o644)
+		if !strings.Contains(out, "warning:") {
+			t.Errorf("group/other-accessible seed file must warn, got %q", out)
+		}
+	})
+
+	t.Run("0600 silent", func(t *testing.T) {
+		out, _ := loadWith(t, 0o600)
+		if out != "" {
+			t.Errorf("0600 seed file must not warn, got %q", out)
+		}
+	})
 }
 
 func TestLoadSeedEmptyRejected(t *testing.T) {

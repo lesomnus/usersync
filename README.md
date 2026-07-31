@@ -41,7 +41,8 @@ usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kep
 usersync passwd <user>   # print a user's seed-derived initial SMB password (to deliver / reset to)
 ```
 
-Note: `xli` expects flags before positional args, e.g. `usersync passwd --seed-file s user`.
+Note: `xli` expects flags before positional args, so put every flag ahead of the
+positional user, e.g. `usersync passwd --seed-file s user` or `usersync purge --yes <user>`.
 
 The account backend is auto-detected (`provider: auto`): shadow-utils
 (`useradd`), busybox (`adduser`), or BSD `pw` — set `provider:` to pin one.
@@ -91,6 +92,7 @@ tombstone permanently blocks its uid from reuse.
 ## Build & test
 
 ```sh
-go build ./...          # CGO-free static binary
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o usersync .   # static binary
+go build ./...          # compile check
 go test ./...           # the pure core (idrange/reconcile/roster/secret) needs no root
 ```

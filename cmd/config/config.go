@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/goccy/go-yaml"
 	"github.com/lesomnus/usersync/internal/idrange"
@@ -109,6 +110,64 @@ func (c *Config) Classifier() *idrange.Classifier {
 			Protect: conv(c.Protect.GID),
 		},
 	})
+}
+
+// Validate rejects a config that would silently mis-scope or mis-provision, so a
+// typo (inverted range, a floor above the window, a relative path, an unknown
+// enum) fails loudly at load instead of quietly voiding safety. Call after Evaluate.
+func (c *Config) Validate() error {
+	okRange := func(what string, min, max uint32) error {
+		if max < min {
+			return fmt.Errorf("%s range is inverted (min %d > max %d)", what, min, max)
+		}
+		return nil
+	}
+	for _, e := range []error{
+		okRange("manage.uid", c.Manage.UID.Min, c.Manage.UID.Max),
+		okRange("manage.gid", c.Manage.GID.Min, c.Manage.GID.Max),
+	} {
+		if e != nil {
+			return e
+		}
+	}
+	for i, r := range c.Protect.UID {
+		if r.Max < r.Min {
+			return fmt.Errorf("protect.uid[%d] range is inverted (min %d > max %d) — it would protect nothing", i, r.Min, r.Max)
+		}
+	}
+	for i, r := range c.Protect.GID {
+		if r.Max < r.Min {
+			return fmt.Errorf("protect.gid[%d] range is inverted (min %d > max %d) — it would protect nothing", i, r.Min, r.Max)
+		}
+	}
+	// A floor above the whole window means no id can ever be managed.
+	if c.Protect.SystemFloor > c.Manage.UID.Max {
+		return fmt.Errorf("protect.system_floor %d is above the manage.uid window (max %d); no user could be managed", c.Protect.SystemFloor, c.Manage.UID.Max)
+	}
+	if c.Protect.SystemFloor > c.Manage.GID.Max {
+		return fmt.Errorf("protect.system_floor %d is above the manage.gid window (max %d); no group could be managed", c.Protect.SystemFloor, c.Manage.GID.Max)
+	}
+	// UPG gid == uid, so the user window and the team-group window must be disjoint.
+	if c.Manage.UID.Min <= c.Manage.GID.Max && c.Manage.GID.Min <= c.Manage.UID.Max {
+		return fmt.Errorf("manage.uid (%d-%d) and manage.gid (%d-%d) overlap; they must be disjoint because each user's UPG gid equals its uid",
+			c.Manage.UID.Min, c.Manage.UID.Max, c.Manage.GID.Min, c.Manage.GID.Max)
+	}
+	for _, p := range []struct{ name, val string }{{"paths.home", c.Paths.Home}, {"paths.groups", c.Paths.Groups}} {
+		if !filepath.IsAbs(p.val) {
+			return fmt.Errorf("%s must be an absolute path, got %q", p.name, p.val)
+		}
+	}
+	switch c.OnOutOfScope {
+	case "", "error", "skip":
+	default:
+		return fmt.Errorf("invalid on_out_of_scope %q (want error|skip)", c.OnOutOfScope)
+	}
+	switch c.Provider {
+	case "", "auto", "shadow-utils", "shadowutils", "busybox", "pw":
+	default:
+		return fmt.Errorf("invalid provider %q (want auto|shadow-utils|busybox|pw)", c.Provider)
+	}
+	return nil
 }
 
 // Policy maps on_out_of_scope to a roster.Policy.

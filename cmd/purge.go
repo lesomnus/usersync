@@ -30,16 +30,21 @@ func NewCmdPurge() *xli.Command {
 			&arg.String{Name: "user", Brief: "the managed user to purge"},
 		},
 		Flags: flg.Flags{
-			&flg.String{Name: "roster", Brief: "roster to record the reserved tombstone in", Value: z.Ptr("roster.yaml")},
+			&flg.String{Name: "roster", Brief: "roster to write the reserved tombstone into (with --reserve)", Value: z.Ptr("roster.yaml")},
 			&flg.Switch{Name: "yes", Alias: 'y', Brief: "skip the confirmation prompt"},
-			&flg.Switch{Name: "reserve", Brief: "record a reserved tombstone in the roster (default on)", Value: z.Ptr(true)},
-			&flg.Switch{Name: "no-reserve", Brief: "do not record a reserved tombstone"},
+			&flg.Switch{Name: "reserve", Brief: "also write the tombstone into the roster (re-encodes it, dropping comments); default only prints a snippet to paste"},
 		},
 
 		Handler: xli.OnRun(func(ctx context.Context, cmd *xli.Command, next xli.Next) error {
 			if err := requireRoot(); err != nil {
 				return err
 			}
+			unlock, err := lockRun()
+			if err != nil {
+				return err
+			}
+			defer unlock()
+
 			c := use_config.Must(ctx)
 			cls := c.Classifier()
 			user := arg.MustGet[string](cmd, "user")
@@ -90,23 +95,21 @@ func NewCmdPurge() *xli.Command {
 
 			cmd.Printf("purged user %q (uid %d)\n", user, uid)
 
-			// 5. reserve the uid so it is never reused (--no-reserve overrides).
-			reserve, _ := flg.Get[bool](cmd, "reserve")
-			noReserve, _ := flg.Get[bool](cmd, "no-reserve")
-			doReserve := reserve && !noReserve
-			if doReserve {
+			// 5. reserve the uid so it is never reused. Print the snippet to paste
+			// (safe — preserves the human-edited roster); only re-encode the file
+			// when --reserve is explicitly requested.
+			printReserveSnippet(cmd, user, uid)
+			if reserve, _ := flg.Get[bool](cmd, "reserve"); reserve {
 				path := "roster.yaml"
 				if p, ok := flg.Get[string](cmd, "roster"); ok && p != "" {
 					path = p
 				}
+				abs, _ := filepath.Abs(path)
 				if err := reserveInRoster(path, user, uid); err != nil {
-					fmt.Fprintf(errW(cmd), "warning: could not record reserved tombstone in %s: %v\n", path, err)
-					printReserveSnippet(cmd, user, uid)
+					fmt.Fprintf(errW(cmd), "warning: could not write reserved tombstone to %s: %v\n", abs, err)
 				} else {
-					cmd.Printf("recorded reserved tombstone for uid %d in %s\n", uid, path)
+					cmd.Printf("wrote reserved tombstone for uid %d into %s (note: comments were not preserved)\n", uid, abs)
 				}
-			} else {
-				printReserveSnippet(cmd, user, uid)
 			}
 			return nil
 		}),

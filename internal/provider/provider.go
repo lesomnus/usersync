@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/usersync/internal/state"
@@ -62,6 +63,14 @@ func Detect(name string, r run.Runner) (Provider, error) {
 	case "pw":
 		return NewPw(r), nil
 	case "", "auto":
+		// On the BSDs prefer pw: they also ship an `adduser` (a Perl wrapper, not
+		// busybox), so probing adduser first would mis-select the busybox backend.
+		switch runtime.GOOS {
+		case "freebsd", "openbsd", "netbsd", "dragonfly":
+			if _, err := exec.LookPath("pw"); err == nil {
+				return NewPw(r), nil
+			}
+		}
 		if _, err := exec.LookPath("useradd"); err == nil {
 			return NewShadowUtils(r), nil
 		}

@@ -82,3 +82,18 @@ func TestSpliceRemovesStaleShare(t *testing.T) {
 		t.Error("remaining group must stay")
 	}
 }
+
+func TestRenderStripsNewlines(t *testing.T) {
+	// Defense-in-depth: even a newline-bearing name/description must not create a
+	// new section/directive in the rendered block.
+	g := []roster.Group{{Name: "team-a", GID: 7001, Description: "x\n[public]\n   path = /\n   guest ok = yes"}}
+	out := Render(g, "/research/groups")
+	// No injected section header or directive may appear at the start of a line;
+	// the payload must be collapsed onto the single `comment =` line.
+	for _, ln := range strings.Split(out, "\n") {
+		s := strings.TrimSpace(ln)
+		if strings.HasPrefix(s, "[public]") || strings.HasPrefix(s, "guest ok") {
+			t.Fatalf("newline injection leaked a directive onto its own line:\n%s", out)
+		}
+	}
+}

@@ -137,8 +137,12 @@ func (s *shadowUtils) EnsureUser(ctx context.Context, u UserSpec) error {
 	if s.present(ctx, "passwd", u.Name) {
 		return nil
 	}
-	if _, err := s.r.Run(ctx, "", "groupadd", "-g", u32(u.UID), u.Name); err != nil {
-		return fmt.Errorf("groupadd %s: %w", u.Name, err)
+	// Create the UPG only if it isn't already present, so a retry after an apply
+	// that was interrupted between groupadd and useradd is idempotent.
+	if !s.present(ctx, "group", u.Name) {
+		if _, err := s.r.Run(ctx, "", "groupadd", "-g", u32(u.UID), u.Name); err != nil {
+			return fmt.Errorf("groupadd %s: %w", u.Name, err)
+		}
 	}
 	if _, err := s.r.Run(ctx, "", "useradd",
 		"-u", u32(u.UID),

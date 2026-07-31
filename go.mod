@@ -1,4 +1,4 @@
-module github.com/lesomnus/go-app
+module github.com/lesomnus/usersync
 
 go 1.26.2
 

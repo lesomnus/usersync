@@ -377,12 +377,16 @@ func TestRefuseCreateOnUPGGroupMismatch(t *testing.T) {
 	}
 }
 
-func TestOrphanInvalidNameSkipped(t *testing.T) {
-	// A scanned account with an unsafe name must never reach an exec argument.
+func TestOrphanInvalidNameSurfacedNotExeced(t *testing.T) {
+	// A scanned account with an unsafe name must still be SURFACED (report-only
+	// Notice) but must never reach an exec argument (no DisableUser).
 	d := &roster.Roster{}
 	s := activeState(state.User{Name: "-x", UID: 3009}, true)
 	got := Reconcile(d, s, cls())
-	if hasKind(got, DisableUser) || hasKind(got, OrphanUser) {
-		t.Fatalf("invalid scanned name must be skipped, got %v", kinds(got))
+	if hasKind(got, DisableUser) {
+		t.Fatalf("invalid scanned name must NOT be exec'd, got %v", kinds(got))
+	}
+	if !hasKind(got, OrphanUser) {
+		t.Fatalf("invalid-named orphan must still be surfaced as a Notice, got %v", kinds(got))
 	}
 }

@@ -230,3 +230,12 @@ func TestNewlineInjectionRejected(t *testing.T) {
 		t.Error("full_name with a newline must be rejected")
 	}
 }
+
+func TestReservedSmbSectionNameRejected(t *testing.T) {
+	for _, bad := range []string{"global", "homes", "printers"} {
+		ro := &Roster{Groups: []Group{{Name: bad, GID: 7001}}}
+		if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
+			t.Errorf("group named %q (reserved Samba section) must be rejected", bad)
+		}
+	}
+}

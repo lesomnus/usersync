@@ -20,6 +20,12 @@ const NamePattern = `^[a-z_][a-z0-9_-]{0,31}$`
 
 var reName = regexp.MustCompile(NamePattern)
 
+// reservedSmbSection are Samba section names a group must not use, since a
+// group name becomes a `[<name>]` share section: `global` would merge usersync
+// directives into Samba's global defaults, `homes`/`printers` collide with
+// Samba's special sections.
+var reservedSmbSection = map[string]bool{"global": true, "homes": true, "printers": true}
+
 func validName(s string) bool { return reName.MatchString(s) }
 
 // ValidName reports whether s is a usersync-manageable account/group name (safe
@@ -96,6 +102,9 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	for _, g := range ro.Groups {
 		if !validName(g.Name) {
 			errs = append(errs, fmt.Errorf("invalid group name %q (must match %s)", g.Name, reName))
+		}
+		if reservedSmbSection[g.Name] {
+			errs = append(errs, fmt.Errorf("group name %q is a reserved Samba section name", g.Name))
 		}
 		if hasControlOrNewline(g.Description) {
 			errs = append(errs, fmt.Errorf("group %q description must be a single line (no control/newline chars)", g.Name))

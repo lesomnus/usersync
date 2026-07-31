@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -227,5 +228,32 @@ func TestShadowUtilsScanGecosWithColon(t *testing.T) {
 	}
 	if u.Home != "/research/home/carol" || u.Shell != "/usr/sbin/nologin" {
 		t.Errorf("home/shell mis-parsed: home=%q shell=%q", u.Home, u.Shell)
+	}
+}
+
+func TestShadowUtilsEnsureUserSkipsExistingUPG(t *testing.T) {
+	// user absent but its UPG group already exists (interrupted prior apply):
+	// groupadd must be skipped, useradd still run.
+	fake := &run.Fake{Handler: func(_, name string, args ...string) (string, error) {
+		cmd := strings.Join(append([]string{name}, args...), " ")
+		switch cmd {
+		case "getent passwd alice":
+			return "", nil // user absent
+		case "getent group alice":
+			return "alice:x:3001:", nil // UPG already present
+		}
+		return "", nil
+	}}
+	err := NewShadowUtils(fake).EnsureUser(context.Background(), UserSpec{Name: "alice", UID: 3001, GID: 3001, Home: "/h", Shell: "/s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range fake.Commands() {
+		if strings.HasPrefix(c, "groupadd ") {
+			t.Errorf("groupadd must be skipped when UPG exists, got %q", c)
+		}
+	}
+	if !slices.ContainsFunc(fake.Commands(), func(c string) bool { return strings.HasPrefix(c, "useradd ") }) {
+		t.Error("useradd must still run")
 	}
 }

@@ -114,15 +114,19 @@ func (b *busybox) SetSupplementaryGroups(ctx context.Context, user string, group
 	sort.Strings(add)
 	sort.Strings(remove)
 
+	// Both sets can carry scan-derived names (the add set via preserved
+	// non-managed memberships): a name that isn't a safe account name (e.g. a
+	// leading '-' from a manual /etc/group edit) must never reach a positional
+	// exec arg where busybox would parse it as a flag.
 	for _, g := range add {
+		if !roster.ValidName(g) {
+			continue
+		}
 		if _, err := b.r.Run(ctx, "", "addgroup", user, g); err != nil {
 			return fmt.Errorf("addgroup %s %s: %w", user, g, err)
 		}
 	}
 	for _, g := range remove {
-		// The remove set is scan-derived; a group name that isn't a safe account
-		// name (e.g. a leading '-' from a manual /etc/group edit) must never reach
-		// a positional exec arg where busybox would parse it as a flag.
 		if !roster.ValidName(g) {
 			continue
 		}

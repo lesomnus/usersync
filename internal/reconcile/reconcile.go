@@ -233,17 +233,16 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		if cls.UID(au.UID) != idrange.Managed {
 			continue
 		}
-		// A scanned name that isn't a valid account name (e.g. "-x" from a direct
-		// /etc/passwd edit or an NSS source) must never reach an exec argument.
-		if !roster.ValidName(name) {
-			continue
-		}
-		// Always surface an orphan as a standing Notice (so a hand-created account
-		// is not a monitoring blind spot), and disable its SMB if still enabled.
+		// Always surface an orphan as a standing Notice (report-only, so it is safe
+		// even for an odd scanned name) — a hand-created account must not be a
+		// monitoring blind spot. Only DISABLE (an exec) when the name is a valid
+		// account name; a name like "-x" must never reach an exec argument.
 		out = append(out, Action{Kind: OrphanUser, Name: name, UID: au.UID,
 			Reason: "absent from roster; home kept. Prefer status: disabled/reserved to keep uid reserved"})
-		if sm, ok := actual.Smb[name]; ok && sm.Enabled {
-			out = append(out, Action{Kind: DisableUser, Name: name, UID: au.UID, Reason: "orphan: absent from roster"})
+		if roster.ValidName(name) {
+			if sm, ok := actual.Smb[name]; ok && sm.Enabled {
+				out = append(out, Action{Kind: DisableUser, Name: name, UID: au.UID, Reason: "orphan: absent from roster"})
+			}
 		}
 	}
 

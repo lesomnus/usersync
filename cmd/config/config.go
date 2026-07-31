@@ -141,12 +141,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("protect.gid[%d] range is inverted (min %d > max %d) — it would protect nothing", i, r.Min, r.Max)
 		}
 	}
-	// A floor above the whole window means no id can ever be managed.
-	if c.Protect.SystemFloor > c.Manage.UID.Max {
-		return fmt.Errorf("protect.system_floor %d is above the manage.uid window (max %d); no user could be managed", c.Protect.SystemFloor, c.Manage.UID.Max)
+	// A floor above the whole window means no id can ever be managed. Compare the
+	// EFFECTIVE floor (the classifier clamps the configured value up to HardFloor),
+	// so a sub-1000 window with a low system_floor doesn't silently manage nothing.
+	floor := c.Protect.SystemFloor
+	if floor < idrange.HardFloor {
+		floor = idrange.HardFloor
 	}
-	if c.Protect.SystemFloor > c.Manage.GID.Max {
-		return fmt.Errorf("protect.system_floor %d is above the manage.gid window (max %d); no group could be managed", c.Protect.SystemFloor, c.Manage.GID.Max)
+	if floor > c.Manage.UID.Max {
+		return fmt.Errorf("effective floor %d is above the manage.uid window (max %d); no user could be managed", floor, c.Manage.UID.Max)
+	}
+	if floor > c.Manage.GID.Max {
+		return fmt.Errorf("effective floor %d is above the manage.gid window (max %d); no group could be managed", floor, c.Manage.GID.Max)
 	}
 	// UPG gid == uid, so the user window and the team-group window must be disjoint.
 	if c.Manage.UID.Min <= c.Manage.GID.Max && c.Manage.GID.Min <= c.Manage.UID.Max {

@@ -23,8 +23,13 @@ func TestValidateRejects(t *testing.T) {
 		"overlapping uid/gid":    func(c *Config) { c.Manage.GID.Min, c.Manage.GID.Max = 3000, 6999 },
 		"relative home path":     func(c *Config) { c.Paths.Home = "research/home" },
 		"newline in groups path": func(c *Config) { c.Paths.Groups = "/srv/g\n[evil]" },
-		"bad on_out_of_scope":    func(c *Config) { c.OnOutOfScope = "nope" },
-		"unknown provider":       func(c *Config) { c.Provider = "adduser" },
+		"sub-1000 window voided by clamp": func(c *Config) {
+			c.Manage.UID.Min, c.Manage.UID.Max = 400, 900
+			c.Manage.GID.Min, c.Manage.GID.Max = 950, 999
+			c.Protect.SystemFloor = 300
+		},
+		"bad on_out_of_scope": func(c *Config) { c.OnOutOfScope = "nope" },
+		"unknown provider":    func(c *Config) { c.Provider = "adduser" },
 	}
 	for name, mutate := range cases {
 		c := goodConfig()

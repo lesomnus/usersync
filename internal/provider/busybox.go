@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/usersync/internal/state"
 )
@@ -119,6 +120,12 @@ func (b *busybox) SetSupplementaryGroups(ctx context.Context, user string, group
 		}
 	}
 	for _, g := range remove {
+		// The remove set is scan-derived; a group name that isn't a safe account
+		// name (e.g. a leading '-' from a manual /etc/group edit) must never reach
+		// a positional exec arg where busybox would parse it as a flag.
+		if !roster.ValidName(g) {
+			continue
+		}
 		if _, err := b.r.Run(ctx, "", "delgroup", user, g); err != nil {
 			return fmt.Errorf("delgroup %s %s: %w", user, g, err)
 		}

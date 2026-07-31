@@ -39,6 +39,7 @@ usersync purge <user>    # DANGEROUS: archive home, delete account + UPG, reserv
 usersync shares          # print the smb.conf [homes]+[<team>] block from the roster
 usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kept); --reload reloads smbd
 usersync passwd <user>   # print a user's seed-derived initial SMB password (to deliver / reset to)
+usersync validate        # static-check config + roster (no root, no system access) — a CI/pre-commit gate
 ```
 
 Note: `xli` expects flags before positional args, so put every flag ahead of the

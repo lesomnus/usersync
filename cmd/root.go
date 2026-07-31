@@ -26,6 +26,7 @@ func NewCmdRoot() *xli.Command {
 			NewCmdPurge(),
 			NewCmdShares(),
 			NewCmdPasswd(),
+			NewCmdValidate(),
 		},
 
 		Handler: xli.Chain(

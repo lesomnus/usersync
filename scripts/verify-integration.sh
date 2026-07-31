@@ -40,7 +40,7 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 echo ">> installing shadow-utils + samba..."
 apt-get update -qq
-apt-get install -y -qq passwd samba samba-common-bin >/dev/null
+apt-get install -y -qq passwd samba samba-common-bin smbclient >/dev/null
 echo ">> go test -tags integration ..."
 go test -tags integration -v ./internal/integration/
 SCRIPT

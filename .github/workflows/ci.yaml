@@ -62,7 +62,7 @@ jobs:
       - name: Install shadow-utils + samba
         run: |
           apt-get update -qq
-          apt-get install -y -qq passwd samba samba-common-bin
+          apt-get install -y -qq passwd samba samba-common-bin smbclient
 
       - name: Integration test (real useradd + samba, throwaway container)
         run: go test -tags integration -v ./internal/integration/

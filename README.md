@@ -38,7 +38,10 @@ usersync export          # print the current managed state as a roster.yaml (boo
 usersync purge <user>    # DANGEROUS: archive home, delete account + UPG, reserve the uid
 usersync shares          # print the smb.conf [homes]+[<team>] block from the roster
 usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kept); --reload reloads smbd
+usersync passwd <user>   # print a user's seed-derived initial SMB password (to deliver / reset to)
 ```
+
+Note: `xli` expects flags before positional args, e.g. `usersync passwd --seed-file s user`.
 
 The account backend is auto-detected (`provider: auto`): shadow-utils
 (`useradd`), busybox (`adduser`), or BSD `pw` — set `provider:` to pin one.

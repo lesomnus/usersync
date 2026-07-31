@@ -20,9 +20,9 @@ type Kind int
 
 const (
 	// --- groups ---
-	CreateGroup   Kind = iota // group absent: groupadd + create folder
-	RefuseGroup               // gid mismatch or guard violation (manual)
-	OrphanGroup               // managed group not in roster: report only, never deleted
+	CreateGroup Kind = iota // group absent: groupadd + create folder
+	RefuseGroup             // gid mismatch or guard violation (manual)
+	OrphanGroup             // managed group not in roster: report only, never deleted
 	// --- users ---
 	CreateUser         // active, absent: full create + SMB enable
 	CreateUserDisabled // disabled, absent: create locked + SMB disabled

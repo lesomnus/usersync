@@ -1,4 +1,23 @@
-# Greeting configuration (used by the `greet` subcommand).
-greet:
-  # Format string; %s is replaced with the name argument.
-  format: "Hello, %s!"
+# usersync.yaml — operational configuration (how the tool runs).
+# The desired users/groups live separately in roster.yaml.
+
+paths:
+  home: /research/home              # personal home root
+  groups: /research/groups          # group folder root
+
+# The id window usersync manages. roster uids/gids must fall inside these.
+manage:
+  uid: { min: 3000, max: 6999 }     # users (and their UPG, gid == uid)
+  gid: { min: 7000, max: 7999 }     # team groups
+
+# Reserved id ranges usersync never touches. system_floor (default 1000) is
+# clamped up to a hard 1000 floor and can only be raised, never lowered.
+protect:
+  system_floor: 1000
+
+# How to treat a roster entry that is neither managed nor protected:
+#   error = refuse the whole roster (default); skip = warn and drop that entry.
+on_out_of_scope: error
+
+seed_file: ./seed.secret            # or env USERSYNC_SEED
+provider: auto                      # auto | shadow-utils | busybox | pw

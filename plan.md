@@ -494,8 +494,11 @@ type Samba interface {
 > 각 단계 끝에 실행 가능한 산출물이 남도록 세로로 얇게 자름. `reconcile`·`idrange`·`secret`은 root 없이 CI에서 테스트.
 
 ### 진행 상황 (2026-07-31)
-- ✅ **순수 코어**: `internal/idrange`(분류+floor 클램프), `internal/secret`(seed 파생+golden), `internal/roster`(types+strict load+validate), `internal/state`, `internal/reconcile`(status×actual 매트릭스). 전부 단위테스트 통과(root 불필요).
-- 🚧 **다음**: cmd/config 확장(운영 설정) + `report` + `plan`/`apply`/`export` 서브커맨드 + provider/samba.
+- ✅ **순수 코어**: `internal/idrange`(분류+floor 클램프), `internal/secret`(seed 파생+golden), `internal/roster`(types+strict load+validate), `internal/state`, `internal/reconcile`(status×actual 매트릭스). 단위테스트 통과.
+- ✅ **백엔드**: `internal/run`(injectable exec+Fake), `internal/provider`(shadow-utils: getent Scan + useradd/usermod/groupadd, golden-command 테스트), `internal/samba`(smbpasswd/pdbedit), `internal/fsops`(홈/그룹 폴더), `internal/report`(text/JSON), `internal/executor`(dispatch+Collect, fake 테스트).
+- ✅ **CLI**: `cmd/config` 운영설정(paths/manage/protect/on_out_of_scope/seed/provider) + `plan`(`--commands` 미리보기)·`apply`·`export`·`purge`(`--reserve` tombstone). greet 스캐폴딩 제거.
+- ✅ **기능 검증**: 스텁 getent/pdbedit로 E2E — plan/commands/export 동작, **`export | plan` = 0 action**(멱등 왕복), out-of-scope error·skip, protected 하드 거부 확인.
+- 🚧 **남음**: `apply` 실계정 통합검증(root 필요, 파일 서버), busybox/pw provider, smb.conf 자동생성(Phase 2), 적대적 리뷰.
 
 **0단계 — 스캐폴딩 정리**
 - `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–6999, gid 7000–7999, system_floor 1000, on_out_of_scope=error, provider auto).

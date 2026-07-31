@@ -16,19 +16,19 @@ func TestClassifyUID(t *testing.T) {
 		id   uint32
 		want Class
 	}{
-		{0, Protected},      // root
-		{999, Protected},    // below floor
-		{1000, OutOfScope},  // at floor but outside manage
-		{2999, OutOfScope},  // just below manage
-		{3000, Managed},     // manage lower bound
-		{3001, Managed},     // normal user
-		{4999, Managed},     // just below protect hole
-		{5000, Protected},   // protect wins over manage (lower bound)
-		{5099, Protected},   // protect upper bound
-		{5100, Managed},     // just above protect hole, still in manage
-		{6999, Managed},     // manage upper bound
-		{7000, OutOfScope},  // above manage
-		{9000, OutOfScope},  // far out
+		{0, Protected},     // root
+		{999, Protected},   // below floor
+		{1000, OutOfScope}, // at floor but outside manage
+		{2999, OutOfScope}, // just below manage
+		{3000, Managed},    // manage lower bound
+		{3001, Managed},    // normal user
+		{4999, Managed},    // just below protect hole
+		{5000, Protected},  // protect wins over manage (lower bound)
+		{5099, Protected},  // protect upper bound
+		{5100, Managed},    // just above protect hole, still in manage
+		{6999, Managed},    // manage upper bound
+		{7000, OutOfScope}, // above manage
+		{9000, OutOfScope}, // far out
 	}
 	for _, tc := range cases {
 		if got := c.UID(tc.id); got != tc.want {
@@ -46,7 +46,7 @@ func TestClassifyGID(t *testing.T) {
 		{999, Protected},
 		{7000, Managed},
 		{7999, Managed},
-		{8000, Protected},  // gid protect range
+		{8000, Protected}, // gid protect range
 		{8199, Protected},
 		{8200, OutOfScope},
 	}

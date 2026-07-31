@@ -1,7 +1,7 @@
 services:
   app:
     image: ghcr.io/lesomnus/usersync:${REVISION:-local}
-    command: [greet, lesomnus]
+    command: [version]
 
     network_mode: host
     privileged: true

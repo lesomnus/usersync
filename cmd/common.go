@@ -9,6 +9,7 @@ import (
 
 	"github.com/lesomnus/usersync/cmd/config"
 	"github.com/lesomnus/usersync/internal/executor"
+	"github.com/lesomnus/usersync/internal/fsops"
 	"github.com/lesomnus/usersync/internal/idrange"
 	"github.com/lesomnus/usersync/internal/provider"
 	"github.com/lesomnus/usersync/internal/roster"
@@ -105,12 +106,17 @@ func requireRoot() error {
 	return nil
 }
 
+// errW returns the command's stderr, defaulting to os.Stderr.
+func errW(cmd *xli.Command) io.Writer {
+	if cmd.ErrWriter != nil {
+		return cmd.ErrWriter
+	}
+	return os.Stderr
+}
+
 // warnSkipped prints out-of-scope skip warnings to stderr.
 func warnSkipped(cmd *xli.Command, skipped []roster.Skipped) {
-	w := cmd.ErrWriter
-	if w == nil {
-		w = os.Stderr
-	}
+	w := errW(cmd)
 	for _, s := range skipped {
 		fmt.Fprintf(w, "warning: skipping %s %q: %s\n", s.Kind, s.Name, s.Reason)
 	}
@@ -148,6 +154,10 @@ func (p printFS) EnsureHomeDir(path string, uid, gid uint32) error {
 	return nil
 }
 
+// Exists is unused during command preview (Collect uses the real FS); present
+// only to satisfy fsops.FS.
+func (printFS) Exists(string) bool { return false }
+
 // dryDeps builds an executor whose backends print commands instead of executing
 // them (used by `plan --commands`). The deriver seed is irrelevant because the
 // print runner never reveals passwords.
@@ -167,11 +177,19 @@ func dryDeps(c *config.Config, w io.Writer) (executor.Deps, error) {
 	}, nil
 }
 
-// collectActual gathers filtered actual state using the given runner-backed backends.
-func collectActual(ctx context.Context, c *config.Config, r run.Runner, cls *idrange.Classifier) (*state.State, error) {
+// collectActual gathers filtered actual state (with home/group-folder existence)
+// using the given runner-backed backends. smbOptional degrades an SMB scan
+// failure (e.g. pdbedit needs root) to a warning for the read-only commands.
+func collectActual(ctx context.Context, c *config.Config, r run.Runner, cls *idrange.Classifier, smbOptional bool, warn io.Writer) (*state.State, error) {
 	p, s, err := backends(c, r)
 	if err != nil {
 		return nil, err
 	}
-	return executor.Collect(ctx, p, s, cls)
+	return executor.Collect(ctx, p, s, cls, executor.CollectOpts{
+		HomeBase:    c.Paths.Home,
+		GroupsBase:  c.Paths.Groups,
+		FS:          fsops.OS{},
+		SmbOptional: smbOptional,
+		Warn:        warn,
+	})
 }

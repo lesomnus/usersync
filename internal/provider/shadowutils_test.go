@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/lesomnus/usersync/internal/run"
@@ -200,5 +201,30 @@ func TestShadowUtilsCommands(t *testing.T) {
 				t.Errorf("commands =\n\t%#v\nwant\n\t%#v", got, tt.want)
 			}
 		})
+	}
+}
+
+// A GECOS field can itself contain a colon; Scan must parse the fixed home and
+// shell fields from the end and treat the middle as the gecos.
+func TestShadowUtilsScanGecosWithColon(t *testing.T) {
+	fake := &run.Fake{Handler: func(_, name string, args ...string) (string, error) {
+		switch strings.Join(append([]string{name}, args...), " ") {
+		case "getent passwd":
+			return "carol:x:3007:3007:Carol C, room 1:2:/research/home/carol:/usr/sbin/nologin\n", nil
+		case "getent group":
+			return "carol:x:3007:\n", nil
+		}
+		return "", nil
+	}}
+	st, err := NewShadowUtils(fake).(*shadowUtils).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := st.Users["carol"]
+	if u.FullName != "Carol C, room 1:2" {
+		t.Errorf("FullName = %q, want %q", u.FullName, "Carol C, room 1:2")
+	}
+	if u.Home != "/research/home/carol" || u.Shell != "/usr/sbin/nologin" {
+		t.Errorf("home/shell mis-parsed: home=%q shell=%q", u.Home, u.Shell)
 	}
 }

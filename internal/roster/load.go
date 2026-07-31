@@ -60,7 +60,9 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	var errs []error
 	var skipped []Skipped
 
-	// --- uniqueness across all declared entries (reuse guard) ---
+	// --- uniqueness across ALL declared entries (reuse guard: a retired uid/name
+	// stays reserved and cannot be reused, so duplicates are rejected even across
+	// entries that will later be dropped) ---
 	seenGroupName := map[string]bool{}
 	seenGID := map[uint32]string{}
 	for _, g := range ro.Groups {
@@ -96,15 +98,11 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 		if i := strings.IndexAny(u.FullName, ",:"); i >= 0 {
 			errs = append(errs, fmt.Errorf("user %q full_name contains forbidden %q (GECOS separator)", u.Name, u.FullName[i]))
 		}
-		for _, gname := range u.Groups {
-			if !seenGroupName[gname] {
-				errs = append(errs, fmt.Errorf("user %q references undefined group %q", u.Name, gname))
-			}
-		}
 	}
 
 	// --- id classification: protected => always error; out-of-scope => error/skip ---
 	keptGroups := ro.Groups[:0:0]
+	keptGroupNames := map[string]bool{}
 	for _, g := range ro.Groups {
 		switch cls.GID(g.GID) {
 		case idrange.Protected:
@@ -117,6 +115,7 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 			}
 		default: // Managed
 			keptGroups = append(keptGroups, g)
+			keptGroupNames[g.Name] = true
 		}
 	}
 
@@ -131,7 +130,12 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 			} else {
 				errs = append(errs, fmt.Errorf("user %q uid %d is out of manage scope (use on_out_of_scope: skip to ignore)", u.Name, u.UID))
 			}
-		default: // Managed
+		default: // Managed — validate its group references against the KEPT groups
+			for _, gname := range u.Groups {
+				if !keptGroupNames[gname] {
+					errs = append(errs, fmt.Errorf("user %q references group %q that is not a managed group in this roster", u.Name, gname))
+				}
+			}
 			keptUsers = append(keptUsers, u)
 		}
 	}

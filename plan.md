@@ -497,8 +497,15 @@ type Samba interface {
 - ✅ **순수 코어**: `internal/idrange`(분류+floor 클램프), `internal/secret`(seed 파생+golden), `internal/roster`(types+strict load+validate), `internal/state`, `internal/reconcile`(status×actual 매트릭스). 단위테스트 통과.
 - ✅ **백엔드**: `internal/run`(injectable exec+Fake), `internal/provider`(shadow-utils: getent Scan + useradd/usermod/groupadd, golden-command 테스트), `internal/samba`(smbpasswd/pdbedit), `internal/fsops`(홈/그룹 폴더), `internal/report`(text/JSON), `internal/executor`(dispatch+Collect, fake 테스트).
 - ✅ **CLI**: `cmd/config` 운영설정(paths/manage/protect/on_out_of_scope/seed/provider) + `plan`(`--commands` 미리보기)·`apply`·`export`·`purge`(`--reserve` tombstone). greet 스캐폴딩 제거.
-- ✅ **기능 검증**: 스텁 getent/pdbedit로 E2E — plan/commands/export 동작, **`export | plan` = 0 action**(멱등 왕복), out-of-scope error·skip, protected 하드 거부 확인.
-- 🚧 **남음**: `apply` 실계정 통합검증(root 필요, 파일 서버), busybox/pw provider, smb.conf 자동생성(Phase 2), 적대적 리뷰.
+- ✅ **기능 검증**: 스텁 getent/pdbedit로 E2E — plan/commands/export 동작, **`export | plan` = 0 action**(멱등 왕복, 홈/폴더 존재 시), out-of-scope error·skip, protected 하드 거부 확인.
+- ✅ **적대적 리뷰 + 수정**: 4개 차원 다중에이전트 리뷰 → 검증된 8건 수정.
+  - 홈/그룹폴더 **드리프트·부분생성 치유**: `state`에 존재여부 수집, 없으면 `ensure-home`/폴더 재생성(멱등). *(퍼미션 mode 드리프트 보정은 mode 수집 후속과제)*
+  - **기존 SMB 비번 보존**: 유닉스 계정 부재+SMB 잔존 시 `Create` 스킵(`HasSmb`) → 사용자 비번 안 덮음.
+  - **purge 데이터손실 차단**: 홈 아카이브 실패 시 삭제 중단 + GECOS 콜론 홈 파싱(끝 기준 앵커).
+  - **범위 밖 그룹 참조**: 사용자 보조그룹은 *유지된* 그룹 기준 검증(skip 시 dangling 방지).
+  - **비-root export**: pdbedit 실패를 경고로 강등, 유저/그룹은 계속 출력.
+  - **reserved 잔존 상시 알림**(Notice), `--no-reserve` 구현. createUser 홈을 계정 직후 생성(부분실패 대비).
+- 🚧 **남음**: `apply` 실계정 통합검증(root 필요, 파일 서버), 퍼미션 mode 드리프트 보정, busybox/pw provider, smb.conf 자동생성(Phase 2).
 
 **0단계 — 스캐폴딩 정리**
 - `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–6999, gid 7000–7999, system_floor 1000, on_out_of_scope=error, provider auto).

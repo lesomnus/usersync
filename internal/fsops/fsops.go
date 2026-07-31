@@ -6,16 +6,24 @@ package fsops
 
 import "os"
 
-// FS creates and permissions the home and group directories.
+// FS creates and permissions the home and group directories, and reports
+// whether a directory exists (used to detect drift / partial provisioning).
 type FS interface {
 	// EnsureGroupDir makes path 2770 (setgid) owned by group gid.
 	EnsureGroupDir(path string, gid uint32) error
 	// EnsureHomeDir makes path 0700 owned by uid:gid.
 	EnsureHomeDir(path string, uid, gid uint32) error
+	// Exists reports whether path exists.
+	Exists(path string) bool
 }
 
 // OS is the real filesystem implementation.
 type OS struct{}
+
+func (OS) Exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
 
 func (OS) EnsureGroupDir(path string, gid uint32) error {
 	if err := os.MkdirAll(path, 0o2770); err != nil {

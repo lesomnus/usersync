@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lesomnus/usersync/cmd/version"
 	"github.com/lesomnus/mkot"
 	"github.com/lesomnus/mkot/pretty"
 	"github.com/lesomnus/otx"
+	"github.com/lesomnus/usersync/cmd/version"
 	"go.opentelemetry.io/otel/attribute"
 )
 

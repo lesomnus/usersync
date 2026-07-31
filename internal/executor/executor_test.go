@@ -72,6 +72,7 @@ func (f fakeFS) EnsureHomeDir(path string, uid, gid uint32) error {
 	*f.log = append(*f.log, fmt.Sprintf("HomeDir(%s,%d,%d)", path, uid, gid))
 	return nil
 }
+func (f fakeFS) Exists(string) bool { return true }
 
 func newDeps(log *[]string) Deps {
 	return Deps{
@@ -98,8 +99,8 @@ func TestCreateUserSequence(t *testing.T) {
 	log := run(t, reconcile.Action{Kind: reconcile.CreateUser, Name: "skim", UID: 3001, FullName: "Sunghyun Kim", Groups: []string{"team-a"}})
 	want := []string{
 		"EnsureUser(skim,uid=3001,gid=3001,home=/research/home/skim,shell=/usr/sbin/nologin)",
-		"SetGroups(skim,[team-a])",
 		"HomeDir(/research/home/skim,3001,3001)",
+		"SetGroups(skim,[team-a])",
 		"Lock(skim)",
 		"SmbCreate(skim,pw=" + secret.New([]byte("test-seed")).InitPW("skim") + ")",
 		"SmbEnable(skim)",
@@ -164,6 +165,24 @@ func TestAddSmbCreatesAndEnables(t *testing.T) {
 	}
 }
 
+func TestEnsureHomeAction(t *testing.T) {
+	log := run(t, reconcile.Action{Kind: reconcile.EnsureHome, Name: "skim", UID: 3001})
+	if len(log) != 1 || log[0] != "HomeDir(/research/home/skim,3001,3001)" {
+		t.Fatalf("EnsureHome => HomeDir, got %v", log)
+	}
+}
+
+func TestCreateUserPreservesExistingSmbPassword(t *testing.T) {
+	// HasSmb: the SMB account already exists, so its password must NOT be reset.
+	log := run(t, reconcile.Action{Kind: reconcile.CreateUser, Name: "skim", UID: 3001, HasSmb: true})
+	if strings.Contains(strings.Join(log, " "), "SmbCreate") {
+		t.Fatalf("must not SmbCreate when HasSmb set: %v", log)
+	}
+	if last := log[len(log)-1]; last != "SmbEnable(skim)" {
+		t.Fatalf("should still enable: %v", log)
+	}
+}
+
 func TestNoSeedFailsOnCreate(t *testing.T) {
 	var log []string
 	d := newDeps(&log)
@@ -192,7 +211,7 @@ func TestCollectFiltersToManaged(t *testing.T) {
 		Provider: fakeProvider{log: &log, scan: raw},
 		Samba:    fakeSamba{log: &log, accts: map[string]samba.Account{"skim": {Name: "skim", Enabled: true}}},
 	}
-	got, err := Collect(context.Background(), d.Provider, d.Samba, cls)
+	got, err := Collect(context.Background(), d.Provider, d.Samba, cls, CollectOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

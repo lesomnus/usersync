@@ -47,6 +47,9 @@ func (s *shadowUtils) Scan(ctx context.Context) (*state.State, error) {
 		if line == "" {
 			continue
 		}
+		// name:x:uid:gid:gecos:home:shell — the GECOS field may itself contain a
+		// colon, so parse the fixed fields from both ends and treat everything in
+		// between as the gecos.
 		f := strings.Split(line, ":")
 		if len(f) < 7 {
 			continue
@@ -60,13 +63,16 @@ func (s *shadowUtils) Scan(ctx context.Context) (*state.State, error) {
 			continue
 		}
 		name := f[0]
+		shell := f[len(f)-1]
+		home := f[len(f)-2]
+		gecos := strings.Join(f[4:len(f)-2], ":")
 		st.Users[name] = state.User{
 			Name:     name,
 			UID:      uint32(uid),
 			GID:      uint32(gid),
-			FullName: f[4],
-			Home:     f[5],
-			Shell:    f[6],
+			FullName: gecos,
+			Home:     home,
+			Shell:    shell,
 		}
 	}
 

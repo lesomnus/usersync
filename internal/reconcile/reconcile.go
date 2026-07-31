@@ -30,8 +30,10 @@ const (
 	AddSmb             // user present but no SMB account: smbpasswd -a + enable
 	EnableUser         // SMB disabled but should be active: smbpasswd -e
 	DisableUser        // SMB active but should be off: smbpasswd -d
+	EnsureHome         // present user whose home directory is missing: (re)create it
 	RefuseUser         // uid mismatch or guard violation (manual)
 	OrphanUser         // managed user not in roster: auto-disable (home kept)
+	ReservedPresent    // reserved status but the account still exists: standing notice
 )
 
 // Class groups kinds by how a report and the idempotency check treat them.
@@ -51,7 +53,7 @@ func (k Kind) Class() Class {
 	switch k {
 	case RefuseGroup, RefuseUser:
 		return Refuse
-	case OrphanGroup:
+	case OrphanGroup, ReservedPresent:
 		return Notice
 	default:
 		return Change
@@ -78,10 +80,14 @@ func (k Kind) String() string {
 		return "enable-user"
 	case DisableUser:
 		return "disable-user"
+	case EnsureHome:
+		return "ensure-home"
 	case RefuseUser:
 		return "refuse-user"
 	case OrphanUser:
 		return "orphan-user"
+	case ReservedPresent:
+		return "reserved-present"
 	default:
 		return "unknown"
 	}
@@ -98,6 +104,7 @@ type Action struct {
 	FullName string
 	Groups   []string // desired supplementary groups (create / update)
 	Status   roster.Status
+	HasSmb   bool   // create*: an SMB account already exists — do not reset its password
 	Reason   string // for refuse / orphan / status context
 }
 
@@ -135,8 +142,12 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		case cur.GID != g.GID:
 			out = append(out, Action{Kind: RefuseGroup, Name: g.Name, GID: g.GID,
 				Reason: reasonf("gid %d desired, %d actual — change is manual", g.GID, cur.GID)})
+		case !cur.FolderExists:
+			// group exists but its folder is missing (drift or a partial create):
+			// CreateGroup's dispatch is idempotent for the group and re-ensures the folder.
+			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, Reason: "group folder missing"})
 		}
-		// present with matching gid => no-op (folder perms ensured on create).
+		// present, gid matches, folder present => no-op.
 	}
 
 	// --- users ---
@@ -191,21 +202,29 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) 
 	switch u.Status {
 	case roster.Reserved:
 		// Desired: no managed account. Never create, never delete. If an account
-		// lingers and its SMB is enabled, disable it; otherwise steady state.
-		if present && hasSmb && sm.Enabled {
-			return []Action{{Kind: DisableUser, Name: u.Name, UID: u.UID, Status: u.Status,
-				Reason: "reserved: account present, SMB disabled (purge to fully remove)"}}
+		// lingers, emit a standing Notice so the operator keeps seeing it; if its
+		// SMB is still enabled, also disable it.
+		if !present {
+			return nil
 		}
-		return nil
+		out := []Action{{Kind: ReservedPresent, Name: u.Name, UID: u.UID, Status: u.Status,
+			Reason: "reserved: account present; purge to fully remove"}}
+		if hasSmb && sm.Enabled {
+			out = append(out, Action{Kind: DisableUser, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "status: reserved"})
+		}
+		return out
 
 	case roster.Disabled:
 		if !present {
 			return []Action{{Kind: CreateUserDisabled, Name: u.Name, UID: u.UID, FullName: u.FullName,
-				Groups: u.Groups, Status: u.Status, Reason: "disabled"}}
+				Groups: u.Groups, Status: u.Status, HasSmb: hasSmb, Reason: "disabled"}}
 		}
 		var out []Action
 		if !sameGroupSet(u.Groups, cur.Groups) {
 			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: u.Groups, Status: u.Status})
+		}
+		if !cur.HomeExists {
+			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing"})
 		}
 		if hasSmb && sm.Enabled {
 			out = append(out, Action{Kind: DisableUser, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "status: disabled"})
@@ -215,11 +234,14 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier) 
 	default: // Active
 		if !present {
 			return []Action{{Kind: CreateUser, Name: u.Name, UID: u.UID, FullName: u.FullName,
-				Groups: u.Groups, Status: u.Status}}
+				Groups: u.Groups, Status: u.Status, HasSmb: hasSmb}}
 		}
 		var out []Action
 		if !sameGroupSet(u.Groups, cur.Groups) {
 			out = append(out, Action{Kind: UpdateUserGroups, Name: u.Name, UID: u.UID, Groups: u.Groups, Status: u.Status})
+		}
+		if !cur.HomeExists {
+			out = append(out, Action{Kind: EnsureHome, Name: u.Name, UID: u.UID, Status: u.Status, Reason: "home directory missing"})
 		}
 		switch {
 		case !hasSmb:

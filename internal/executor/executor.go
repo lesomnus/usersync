@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/lesomnus/usersync/internal/fsops"
@@ -22,29 +23,56 @@ import (
 // DefaultShell blocks interactive login for managed users.
 const DefaultShell = "/usr/sbin/nologin"
 
+// CollectOpts tunes state collection.
+type CollectOpts struct {
+	HomeBase   string
+	GroupsBase string
+	// FS, if set, is used to record whether each managed home/group directory
+	// exists so the reconciler can heal a missing one.
+	FS fsops.FS
+	// SmbOptional downgrades an SMB scan failure (e.g. pdbedit needs root) to a
+	// warning to Warn instead of a fatal error. Read-only commands set this.
+	SmbOptional bool
+	Warn        io.Writer
+}
+
 // Collect gathers the actual State from the account and SMB backends, filtered
 // to the managed id range (so the reconciler never sees system or out-of-scope
 // accounts). SMB accounts are keyed in by name.
-func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idrange.Classifier) (*state.State, error) {
+func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idrange.Classifier, opts CollectOpts) (*state.State, error) {
 	raw, err := p.Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("scan accounts: %w", err)
 	}
 	accts, err := s.Accounts(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("scan smb accounts: %w", err)
+		if !opts.SmbOptional {
+			return nil, fmt.Errorf("scan smb accounts: %w", err)
+		}
+		if opts.Warn != nil {
+			fmt.Fprintf(opts.Warn, "warning: SMB status unavailable (pdbedit): %v\n", err)
+		}
+		accts = nil
 	}
 
 	out := state.New()
 	for name, u := range raw.Users {
-		if cls.UID(u.UID) == idrange.Managed {
-			out.Users[name] = u
+		if cls.UID(u.UID) != idrange.Managed {
+			continue
 		}
+		if opts.FS != nil {
+			u.HomeExists = opts.FS.Exists(filepath.Join(opts.HomeBase, name))
+		}
+		out.Users[name] = u
 	}
 	for name, g := range raw.Groups {
-		if cls.GID(g.GID) == idrange.Managed {
-			out.Groups[name] = g
+		if cls.GID(g.GID) != idrange.Managed {
+			continue
 		}
+		if opts.FS != nil {
+			g.FolderExists = opts.FS.Exists(filepath.Join(opts.GroupsBase, name))
+		}
+		out.Groups[name] = g
 	}
 	for name, a := range accts {
 		out.Smb[name] = state.Smb{Name: a.Name, Enabled: a.Enabled}
@@ -99,6 +127,9 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 	case reconcile.UpdateUserGroups:
 		return d.Provider.SetSupplementaryGroups(ctx, a.Name, a.Groups)
 
+	case reconcile.EnsureHome:
+		return d.FS.EnsureHomeDir(filepath.Join(d.HomeBase, a.Name), a.UID, a.UID)
+
 	case reconcile.AddSmb:
 		pw, err := d.initPW(a.Name)
 		if err != nil {
@@ -115,6 +146,9 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 	case reconcile.DisableUser, reconcile.OrphanUser:
 		return d.Samba.Disable(ctx, a.Name)
 
+	case reconcile.ReservedPresent:
+		return nil // standing notice; no mutation
+
 	case reconcile.RefuseUser, reconcile.RefuseGroup, reconcile.OrphanGroup:
 		return nil // report-only; no mutation
 
@@ -123,9 +157,12 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 	}
 }
 
-// createUser performs the full user convergence: UPG+user, supplementary
-// groups, home dir, unix password lock, then SMB registration (enabled or
-// disabled). uid == gid (UPG).
+// createUser performs the full user convergence: UPG+user, home dir,
+// supplementary groups, unix password lock, then SMB registration (enabled or
+// disabled). uid == gid (UPG). The home directory is created immediately after
+// the account so a later failure cannot leave an account with no home. If an
+// SMB account already exists (a.HasSmb), its password is left untouched — only
+// its enabled state is reconciled (never reset an existing password).
 func (d Deps) createUser(ctx context.Context, a reconcile.Action, enable bool) error {
 	home := filepath.Join(d.HomeBase, a.Name)
 	spec := provider.UserSpec{
@@ -139,21 +176,23 @@ func (d Deps) createUser(ctx context.Context, a reconcile.Action, enable bool) e
 	if err := d.Provider.EnsureUser(ctx, spec); err != nil {
 		return err
 	}
-	if err := d.Provider.SetSupplementaryGroups(ctx, a.Name, a.Groups); err != nil {
+	if err := d.FS.EnsureHomeDir(home, a.UID, a.UID); err != nil {
 		return err
 	}
-	if err := d.FS.EnsureHomeDir(home, a.UID, a.UID); err != nil {
+	if err := d.Provider.SetSupplementaryGroups(ctx, a.Name, a.Groups); err != nil {
 		return err
 	}
 	if err := d.Provider.LockPassword(ctx, a.Name); err != nil {
 		return err
 	}
-	pw, err := d.initPW(a.Name)
-	if err != nil {
-		return err
-	}
-	if err := d.Samba.Create(ctx, a.Name, pw); err != nil {
-		return err
+	if !a.HasSmb {
+		pw, err := d.initPW(a.Name)
+		if err != nil {
+			return err
+		}
+		if err := d.Samba.Create(ctx, a.Name, pw); err != nil {
+			return err
+		}
 	}
 	if enable {
 		return d.Samba.Enable(ctx, a.Name)

@@ -44,7 +44,10 @@ func countChange(as []Action) int {
 	return n
 }
 
+// activeState builds a state with u present (and its home already provisioned,
+// unless the caller set HomeExists) plus an SMB account with the given enabled state.
 func activeState(u state.User, enabled bool) *state.State {
+	u.HomeExists = true
 	s := state.New()
 	s.Users[u.Name] = u
 	s.Smb[u.Name] = state.Smb{Name: u.Name, Enabled: enabled}
@@ -68,8 +71,8 @@ func TestIdempotentNoChange(t *testing.T) {
 		Users:  []roster.User{{Name: "skim", UID: 3001, Groups: []string{"team-a"}}},
 	}
 	s := state.New()
-	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001}
-	s.Users["skim"] = state.User{Name: "skim", UID: 3001, GID: 3001, Groups: []string{"team-a"}}
+	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true}
+	s.Users["skim"] = state.User{Name: "skim", UID: 3001, GID: 3001, Groups: []string{"team-a"}, HomeExists: true}
 	s.Smb["skim"] = state.Smb{Name: "skim", Enabled: true}
 
 	got := Reconcile(d, s, cls())
@@ -84,9 +87,9 @@ func TestUpdateGroups(t *testing.T) {
 		Users:  []roster.User{{Name: "jlee", UID: 3002, Groups: []string{"team-a", "team-b"}}},
 	}
 	s := state.New()
-	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001}
-	s.Groups["team-b"] = state.Group{Name: "team-b", GID: 7002}
-	s.Users["jlee"] = state.User{Name: "jlee", UID: 3002, Groups: []string{"team-a"}} // missing team-b
+	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true}
+	s.Groups["team-b"] = state.Group{Name: "team-b", GID: 7002, FolderExists: true}
+	s.Users["jlee"] = state.User{Name: "jlee", UID: 3002, Groups: []string{"team-a"}, HomeExists: true} // missing team-b
 	s.Smb["jlee"] = state.Smb{Name: "jlee", Enabled: true}
 
 	got := Reconcile(d, s, cls())
@@ -161,14 +164,70 @@ func TestReservedLifecycle(t *testing.T) {
 	if got := Reconcile(d, state.New(), cls()); len(got) != 0 {
 		t.Fatalf("reserved+absent => 0 actions, got %v", kinds(got))
 	}
-	// present + enabled => disable, but never delete
+	// present + enabled => standing notice + disable, but never delete
 	got := Reconcile(d, activeState(state.User{Name: "oldhand", UID: 3005}, true), cls())
-	if len(got) != 1 || got[0].Kind != DisableUser {
-		t.Fatalf("reserved+enabled => DisableUser, got %v", kinds(got))
+	if len(got) != 2 || got[0].Kind != ReservedPresent || got[1].Kind != DisableUser {
+		t.Fatalf("reserved+enabled => ReservedPresent+DisableUser, got %v", kinds(got))
 	}
-	// present + disabled => steady state
-	if got := Reconcile(d, activeState(state.User{Name: "oldhand", UID: 3005}, false), cls()); len(got) != 0 {
-		t.Fatalf("reserved+disabled => 0 actions, got %v", kinds(got))
+	// present + disabled => STANDING notice remains (no Change action), so the
+	// operator keeps being nudged that a reserved account lingers.
+	got = Reconcile(d, activeState(state.User{Name: "oldhand", UID: 3005}, false), cls())
+	if len(got) != 1 || got[0].Kind != ReservedPresent {
+		t.Fatalf("reserved+disabled => ReservedPresent notice, got %v", kinds(got))
+	}
+	if got[0].Kind.Class() != Notice {
+		t.Errorf("ReservedPresent must be a Notice (not a Change), so idempotency holds")
+	}
+	if countChange(got) != 0 {
+		t.Errorf("reserved+disabled must have 0 Change actions (idempotent), got %d", countChange(got))
+	}
+}
+
+func TestHomeHeal(t *testing.T) {
+	// A present active user whose home directory is missing must be healed, and
+	// only then (idempotent once the home exists).
+	d := &roster.Roster{Users: []roster.User{{Name: "skim", UID: 3001}}}
+	s := state.New()
+	s.Users["skim"] = state.User{Name: "skim", UID: 3001, HomeExists: false}
+	s.Smb["skim"] = state.Smb{Name: "skim", Enabled: true}
+	got := Reconcile(d, s, cls())
+	if !hasKind(got, EnsureHome) {
+		t.Fatalf("missing home => EnsureHome, got %v", kinds(got))
+	}
+	// once present, no EnsureHome.
+	s.Users["skim"] = state.User{Name: "skim", UID: 3001, HomeExists: true}
+	if got := Reconcile(d, s, cls()); hasKind(got, EnsureHome) {
+		t.Fatalf("present home => no EnsureHome, got %v", kinds(got))
+	}
+}
+
+func TestGroupFolderHeal(t *testing.T) {
+	d := &roster.Roster{Groups: []roster.Group{{Name: "team-a", GID: 7001}}}
+	s := state.New()
+	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: false}
+	got := Reconcile(d, s, cls())
+	if len(got) != 1 || got[0].Kind != CreateGroup {
+		t.Fatalf("present group with missing folder => CreateGroup (idempotent re-ensure), got %v", kinds(got))
+	}
+	// folder present => no-op.
+	s.Groups["team-a"] = state.Group{Name: "team-a", GID: 7001, FolderExists: true}
+	if got := Reconcile(d, s, cls()); len(got) != 0 {
+		t.Fatalf("present group + folder => 0 actions, got %v", kinds(got))
+	}
+}
+
+func TestCreatePreservesExistingSmb(t *testing.T) {
+	// unix account absent but an SMB account lingers (e.g. manual userdel): the
+	// create action must be flagged so the executor does not reset the password.
+	d := &roster.Roster{Users: []roster.User{{Name: "skim", UID: 3001}}}
+	s := state.New()
+	s.Smb["skim"] = state.Smb{Name: "skim", Enabled: true} // SMB present, unix absent
+	got := Reconcile(d, s, cls())
+	if len(got) != 1 || got[0].Kind != CreateUser {
+		t.Fatalf("unix absent => CreateUser, got %v", kinds(got))
+	}
+	if !got[0].HasSmb {
+		t.Error("CreateUser must set HasSmb when an SMB account already exists (do not reset password)")
 	}
 }
 
@@ -185,7 +244,7 @@ func TestReserveBlocksReuseIsLoaderConcern(t *testing.T) {
 func TestAddSmbWhenMissing(t *testing.T) {
 	d := &roster.Roster{Users: []roster.User{{Name: "skim", UID: 3001}}}
 	s := state.New()
-	s.Users["skim"] = state.User{Name: "skim", UID: 3001} // exists, no smb account
+	s.Users["skim"] = state.User{Name: "skim", UID: 3001, HomeExists: true} // exists, no smb account
 	got := Reconcile(d, s, cls())
 	if len(got) != 1 || got[0].Kind != AddSmb {
 		t.Fatalf("active present without smb => AddSmb, got %v", kinds(got))

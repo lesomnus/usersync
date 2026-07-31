@@ -40,7 +40,11 @@ func NewCmdApply() *xli.Command {
 			if err != nil {
 				return err
 			}
-			actual, err := executor.Collect(ctx, p, s, cls)
+			actual, err := executor.Collect(ctx, p, s, cls, executor.CollectOpts{
+				HomeBase:   c.Paths.Home,
+				GroupsBase: c.Paths.Groups,
+				FS:         fsops.OS{},
+			})
 			if err != nil {
 				return err
 			}

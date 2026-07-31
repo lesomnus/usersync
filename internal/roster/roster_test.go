@@ -151,6 +151,22 @@ func TestFullNameSeparatorsRejected(t *testing.T) {
 	}
 }
 
+func TestUserRefToDroppedGroupRejectedUnderSkip(t *testing.T) {
+	// A managed user referencing a group that is dropped as out-of-scope must be
+	// caught, not silently passed through to `usermod -G <nonexistent>` at apply.
+	ro := &Roster{
+		Groups: []Group{{Name: "legacy-team", GID: 9000}}, // out of manage scope (7000-7999)
+		Users:  []User{{Name: "alice", UID: 3001, Groups: []string{"legacy-team"}}},
+	}
+	_, err := ro.Validate(testClassifier(), PolicySkip)
+	if err == nil {
+		t.Fatal("kept user referencing a dropped (out-of-scope) group must be rejected")
+	}
+	if !strings.Contains(err.Error(), "not a managed group") {
+		t.Errorf("error = %v, want managed-group reference failure", err)
+	}
+}
+
 func TestProtectedAlwaysRejected(t *testing.T) {
 	// A uid below the floor is protected; skip policy must NOT rescue it.
 	ro := &Roster{Users: []User{{Name: "sys", UID: 500}}}

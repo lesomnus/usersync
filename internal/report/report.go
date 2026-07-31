@@ -132,7 +132,7 @@ type jsonResult struct {
 func glyph(k reconcile.Kind) string {
 	switch k {
 	case reconcile.CreateGroup, reconcile.CreateUser, reconcile.CreateUserDisabled,
-		reconcile.AddSmb, reconcile.EnableUser:
+		reconcile.AddSmb, reconcile.EnableUser, reconcile.EnsureHome:
 		return "+"
 	case reconcile.UpdateUserGroups:
 		return "~"
@@ -140,7 +140,7 @@ func glyph(k reconcile.Kind) string {
 		return "-"
 	case reconcile.RefuseGroup, reconcile.RefuseUser:
 		return "!"
-	case reconcile.OrphanGroup:
+	case reconcile.OrphanGroup, reconcile.ReservedPresent:
 		return "·"
 	default:
 		return "?"

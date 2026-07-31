@@ -33,7 +33,7 @@ func NewCmdPlan() *xli.Command {
 			}
 			warnSkipped(cmd, skipped)
 
-			actual, err := collectActual(ctx, c, run.Exec{}, cls)
+			actual, err := collectActual(ctx, c, run.Exec{}, cls, true, errW(cmd))
 			if err != nil {
 				return err
 			}

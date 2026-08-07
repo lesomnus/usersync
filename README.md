@@ -40,6 +40,8 @@ usersync plan            # dry-run: collect state, diff against roster, print ac
 usersync plan --commands # also print the exact backend commands each action would run
 usersync apply           # execute the actions (root; idempotent; never deletes)
 usersync export          # print the current managed state as a roster.yaml (bootstrap / drift)
+usersync export --format csv    # the RFC2307 id assignments, for seeding a directory
+usersync export --format ldif --base-dn 'OU=X,DC=corp,DC=example,DC=com'
 usersync detach <user>   # release the LOCAL account, keep the home (hand the name to AD)
 usersync purge <user>    # DANGEROUS: archive home, delete account + UPG, reserve the uid
 usersync shares          # print the smb.conf [homes]+[<team>] block from the roster
@@ -81,6 +83,31 @@ the entry and set its `status`:
 
 Uniqueness of names and uids is enforced across all statuses, so a `reserved`
 tombstone permanently blocks its uid from reuse.
+
+## Carrying the numbers into a directory
+
+Files are owned by a numeric uid, and on a snapshotting filesystem the historical
+ones cannot be chown'd at all — so if a directory service invents its own numbers
+when it takes over, every snapshot ends up pointing at an identity that no longer
+matches. `export --format csv|ldif` renders the assignments already in use so
+they can be seeded into AD's RFC2307 `uidNumber`/`gidNumber` attributes instead,
+which makes the handover a no-op for every file:
+
+```sh
+usersync export --format csv > ids.csv
+```
+```powershell
+Import-Csv ids.csv | Where-Object type -eq 'group' |
+  ForEach-Object { Set-ADGroup $_.name -Replace @{gidNumber=[int]$_.gid_number} }
+Import-Csv ids.csv | Where-Object type -eq 'user'  |
+  ForEach-Object { Set-ADUser  $_.name -Replace @{uidNumber=[int]$_.uid_number; gidNumber=[int]$_.gid_number} }
+```
+
+CSV identifies accounts by name (`sAMAccountName`) and lets PowerShell resolve
+the DN; LDIF has to build one, and assumes each account's CN equals its name,
+which AD does not guarantee. Prefer CSV unless you have checked. Reserved
+tombstones are skipped by both — they have no account to seed, and their uids
+stay blocked by the reservation of the whole band.
 
 ## Handing a user over to a directory service
 

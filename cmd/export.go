@@ -2,27 +2,51 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/goccy/go-yaml"
+	"github.com/lesomnus/usersync/internal/executor"
+	"github.com/lesomnus/usersync/internal/idexport"
 	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/usersync/internal/state"
 	"github.com/lesomnus/xli"
+	"github.com/lesomnus/xli/flg"
+	"github.com/lesomnus/z"
 )
 
 func NewCmdExport() *xli.Command {
 	return &xli.Command{
 		Name:  "export",
-		Brief: "print the current system state (managed range) as a roster.yaml",
-		Synop: "Scans the actual users/groups within the managed range and prints an equivalent roster.yaml to stdout. Bootstraps a roster from an already-configured server. Feeding the output back to `plan` should yield zero actions.",
+		Brief: "print the current system state (managed range) as a roster.yaml, csv, or ldif",
+		Synop: "Scans the actual users/groups within the managed range and prints them to stdout. " +
+			"The default `roster` format bootstraps a roster from an already-configured server; feeding it back to `plan` should yield zero actions. " +
+			"`csv` and `ldif` instead render the RFC2307 id assignments, to seed a directory service with the uid/gid numbers already in use here rather than letting it invent new ones.",
 
-		Flags: commonFlags(),
+		Flags: append(commonFlags(),
+			&flg.String{Name: "format", Brief: "roster (default) | csv | ldif", Value: z.Ptr("roster")},
+			&flg.String{Name: "base-dn", Brief: "base DN for --format ldif (e.g. OU=Research,DC=corp,DC=example,DC=com)"},
+		),
 
 		Handler: xli.OnRun(func(ctx context.Context, cmd *xli.Command, next xli.Next) error {
 			c := use_config.Must(ctx)
 			if err := applyCommonFlags(cmd, c); err != nil {
 				return err
+			}
+			format, _ := flg.Get[string](cmd, "format")
+			baseDN, _ := flg.Get[string](cmd, "base-dn")
+			// Reject a bad format (or a missing base DN) before scanning, so an
+			// invalid invocation fails immediately rather than after the work.
+			switch format {
+			case "", "roster", "csv":
+			case "ldif":
+				if strings.TrimSpace(baseDN) == "" {
+					return fmt.Errorf("--format ldif needs --base-dn (e.g. OU=Research,DC=corp,DC=example,DC=com)")
+				}
+			default:
+				return fmt.Errorf("invalid --format %q (want roster|csv|ldif)", format)
 			}
 			cls := c.Classifier()
 
@@ -32,9 +56,16 @@ func NewCmdExport() *xli.Command {
 			}
 
 			ro := stateToRoster(actual)
-			enc := yaml.NewEncoder(cmd, yaml.Indent(2), yaml.IndentSequence(true))
-			defer enc.Close()
-			return enc.Encode(ro)
+			switch format {
+			case "csv":
+				return idexport.CSV(cmd, ro, c.Paths.Home, executor.DefaultShell)
+			case "ldif":
+				return idexport.LDIF(cmd, ro, baseDN)
+			default:
+				enc := yaml.NewEncoder(cmd, yaml.Indent(2), yaml.IndentSequence(true))
+				defer enc.Close()
+				return enc.Encode(ro)
+			}
 		}),
 	}
 }

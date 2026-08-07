@@ -19,6 +19,12 @@ manage:
 protect:
   system_floor: 1000
 
+# Who owns the accounts.
+#   manage  usersync creates and reconciles them (the default)
+#   audit   a directory service does; usersync only verifies that what the system
+#           resolves matches the roster (`usersync audit`), and apply/purge refuse
+mode: manage
+
 # How to treat a roster entry that is neither managed nor protected:
 #   error = refuse the whole roster (default); skip = warn and drop that entry.
 on_out_of_scope: error

@@ -22,6 +22,16 @@ func NewCmdApply() *xli.Command {
 		Flags: commonFlags(),
 
 		Handler: xli.OnRun(func(ctx context.Context, cmd *xli.Command, next xli.Next) error {
+			// Config-level refusals come first: there is no point telling someone to
+			// re-run as root for an operation that is going to be refused anyway.
+			c := use_config.Must(ctx)
+			if err := applyCommonFlags(cmd, c); err != nil {
+				return err
+			}
+			if err := requireManageMode(c, "apply"); err != nil {
+				return err
+			}
+
 			if err := requireRoot(); err != nil {
 				return err
 			}
@@ -31,10 +41,6 @@ func NewCmdApply() *xli.Command {
 			}
 			defer unlock()
 
-			c := use_config.Must(ctx)
-			if err := applyCommonFlags(cmd, c); err != nil {
-				return err
-			}
 			cls := c.Classifier()
 
 			ro, skipped, err := loadRoster(cmd, c, cls)

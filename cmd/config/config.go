@@ -48,12 +48,25 @@ type ProtectConfig struct {
 type Config struct {
 	path string
 
-	Paths        PathsConfig   `yaml:"paths"`
-	Manage       ManageConfig  `yaml:"manage"`
-	Protect      ProtectConfig `yaml:"protect"`
-	OnOutOfScope string        `yaml:"on_out_of_scope"`
-	SeedFile     string        `yaml:"seed_file"`
-	Provider     string        `yaml:"provider"`
+	Paths   PathsConfig   `yaml:"paths"`
+	Manage  ManageConfig  `yaml:"manage"`
+	Protect ProtectConfig `yaml:"protect"`
+
+	// Mode is who owns the accounts.
+	//
+	//   manage  usersync creates and reconciles them (the default)
+	//   audit   something else does — a directory service — and usersync only
+	//           verifies that what the system resolves matches the roster
+	//
+	// In audit mode every mutating command refuses. The roster stays the ledger
+	// of which number belongs to whom after the handover, and `usersync audit` is
+	// what checks the directory still agrees with it; an `apply` at that point
+	// would try to recreate accounts the directory owns.
+	Mode string `yaml:"mode"`
+
+	OnOutOfScope string `yaml:"on_out_of_scope"`
+	SeedFile     string `yaml:"seed_file"`
+	Provider     string `yaml:"provider"`
 
 	Otel OtelConfig `yaml:"otel"`
 }
@@ -91,6 +104,7 @@ func (c *Config) Evaluate() error {
 	z.FallbackP(&c.Manage.GID.Min, uint32(10000))
 	z.FallbackP(&c.Manage.GID.Max, uint32(19999))
 	z.FallbackP(&c.Protect.SystemFloor, uint32(1000))
+	z.FallbackP(&c.Mode, "manage")
 	z.FallbackP(&c.OnOutOfScope, "error")
 	z.FallbackP(&c.SeedFile, "./seed.secret")
 	z.FallbackP(&c.Provider, "auto")
@@ -172,6 +186,11 @@ func (c *Config) Validate() error {
 		if i := strings.IndexFunc(p.val, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
 			return fmt.Errorf("%s must not contain control/newline characters", p.name)
 		}
+	}
+	switch c.Mode {
+	case "", "manage", "audit":
+	default:
+		return fmt.Errorf("invalid mode %q (want manage|audit)", c.Mode)
 	}
 	switch c.OnOutOfScope {
 	case "", "error", "skip":

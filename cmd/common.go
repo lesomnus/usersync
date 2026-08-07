@@ -111,6 +111,30 @@ func requireRoot() error {
 	return nil
 }
 
+// requireManageMode blocks a mutating command when the config has handed account
+// ownership to a directory service.
+//
+// After a handover the accounts are not usersync's to create: an `apply` would
+// try to recreate what the directory owns, and would do it with locally derived
+// numbers, which is how a uid comes apart from the files that carry it. The
+// roster is still the ledger — `usersync audit` is what reads it in that mode.
+//
+// The gate covers account creation and destruction (`apply`, `purge`) only.
+// `detach` is exempt because it releases local ownership, which is the direction
+// audit mode already assumes; gating it would mean editing the config before
+// being allowed to finish a handover. `shares` is exempt because smb.conf stays
+// usersync's business either way — the directory owns accounts, not shares.
+func requireManageMode(c *config.Config, what string) error {
+	if c.Mode != "audit" {
+		return nil
+	}
+	where := c.Path()
+	if where == "" {
+		where = "the config"
+	}
+	return fmt.Errorf("refusing to %s: mode is \"audit\", so a directory service owns these accounts and usersync only verifies them (see `usersync audit`); set mode: manage in %s to take ownership back", what, where)
+}
+
 // lockRun takes an exclusive, non-blocking advisory lock so two mutating runs
 // (apply/purge/shares --write) cannot race. It returns a release func to defer.
 func lockRun() (func(), error) {

@@ -42,6 +42,7 @@ usersync apply           # execute the actions (root; idempotent; never deletes)
 usersync export          # print the current managed state as a roster.yaml (bootstrap / drift)
 usersync export --format csv    # the RFC2307 id assignments, for seeding a directory
 usersync export --format ldif --base-dn 'OU=X,DC=corp,DC=example,DC=com'
+usersync audit           # read-only: does what the system resolves match the roster?
 usersync detach <user>   # release the LOCAL account, keep the home (hand the name to AD)
 usersync purge <user>    # DANGEROUS: archive home, delete account + UPG, reserve the uid
 usersync shares          # print the smb.conf [homes]+[<team>] block from the roster
@@ -83,6 +84,32 @@ the entry and set its `status`:
 
 Uniqueness of names and uids is enforced across all statuses, so a `reserved`
 tombstone permanently blocks its uid from reuse.
+
+## After a directory takes over: `mode: audit`
+
+Setting `mode: audit` in `usersync.yaml` says the accounts belong to something
+else now. `apply` and `purge` refuse — an apply would try to recreate what the
+directory owns — while `detach` and `shares` stay available, because releasing
+local ownership moves *towards* that state and smb.conf is not an account.
+
+What usersync keeps doing is the part nothing else does: the roster is still the
+ledger of which number belongs to whom, and `usersync audit` checks that the
+directory agrees with it. It is read-only, needs no root, and exits non-zero on
+any disagreement, so it runs from cron:
+
+```
+AUDIT (roster vs. what the system resolves)
+  ✗ user  park             declared 3004, but resolves to 100042 — files stay on 3004
+  ✗ user  ghost            declared 3009, but the name does not resolve
+  ✗ user  intruder         resolves to 3007 inside the managed band but is not in the roster
+  ✗ group team-a           declared 10001, but resolves to 19999 — files stay on 10001
+Summary: 4 users, 1 groups checked — 4 findings
+```
+
+It also reports a reserved tombstone that has come back to life, and two names
+that resolve to the same number — neither of which the roster's own uniqueness
+check can see, because it validates what is *declared*, not what the directory
+*answers*.
 
 ## Carrying the numbers into a directory
 

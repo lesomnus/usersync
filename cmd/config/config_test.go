@@ -55,6 +55,7 @@ func TestValidateRejects(t *testing.T) {
 		},
 		"bad on_out_of_scope": func(c *Config) { c.OnOutOfScope = "nope" },
 		"unknown provider":    func(c *Config) { c.Provider = "adduser" },
+		"unknown mode":        func(c *Config) { c.Mode = "readonly" },
 	}
 	for name, mutate := range cases {
 		c := goodConfig()

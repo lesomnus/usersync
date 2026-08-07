@@ -2,7 +2,7 @@
 
 > **이 문서 하나로 다른 세션/개발자가 바로 구현할 수 있도록 자립적으로 작성됨.**
 > 대상 산출물: `usersync` — 파일 서버의 SMB 사용자/그룹을 **텍스트 파일(선언)** 로 관리하는 **Go 단일 바이너리** reconciler.
-> 관련: [`identity-and-sharing.md`](./identity-and-sharing.md)(현재 수동 구성), [`admin-guide.md`](./admin-guide.md)(이 툴이 대체할 수동 절차), [`identity-roadmap.md`](./identity-roadmap.md)(향후 중앙 인증).
+> 관련: [`admin-guide.md`](./admin-guide.md)(운영 절차), [`identity-roadmap.md`](./identity-roadmap.md)(자격증명 아키텍처 결정 + 온프렘 AD 전환 계획).
 
 ---
 
@@ -33,7 +33,10 @@
 - **의존성 0**: Python/Ruby/인터프리터·패키지 매니저 없이 **정적 단일 바이너리**(Python 회피가 설계 동기 — Ansible 배제 이유).
 
 **비목적**
-- 중앙 인증/디렉터리(FreeIPA/AD/Entra)·SSO·소셜 로그인 → [`identity-roadmap.md`](./identity-roadmap.md) 영역. 이 툴은 **로컬 규모** 전용.
+- **디렉터리 서비스가 되는 것**(FreeIPA/AD/Entra)·SSO·소셜 로그인. 이 툴은 **로컬 규모** 전용이다.
+  단, 디렉터리에 **인계하는 것**은 목적 안에 있다 — `export --format csv|ldif`(번호를 그대로 넘김),
+  `detach`(계정만 놓아주고 데이터는 남김), `mode: audit` + `audit`(인계 후 장부 감시).
+  근거와 절차는 [`identity-roadmap.md`](./identity-roadmap.md).
 - 일반 IAM·권한 정책 엔진이 아님. 오직 유저·그룹·SMB 계정 reconcile.
 
 ---
@@ -533,7 +536,23 @@ type Samba interface {
   - **mode 드리프트 보정**: 홈 `0700`/폴더 `2770 setgid` 어긋나면 재보정.
   - **교차 이름 uid/gid 충돌** 감지 → RefuseUser/RefuseGroup(cryptic apply 실패 방지). **orphan 상시 Notice**. **apply 리포트가 실행 결과 반영**(✗ FAILED). **동시 실행 락**(flock). **provider auto가 BSD면 pw 우선**. LICENSE(Apache-2.0), CI lint(gofmt+vet) 게이트, purge `--reserve` 옵트인(주석 보존), seed 파일 권한 경고, 버전 `ReadBuildInfo` 폴백.
 - ✅ **블로커 수정 적대적 재검증 4라운드**: 각 수정을 독립 검증→잔여 구멍 발견→재수정 반복(파생 gap: smb.conf path/groupsBase, create-path 그룹 strip, config floor 클램프, argv/scan 이름 exec-arg, 예약 섹션명 global/homes, busybox addgroup/delgroup). 라운드마다 더 좁아져 수렴. 남은 건 test-coverage 수준의 미세 항목.
+- ✅ **AD 인계 준비 + smb.conf mode 버그 수정** (2026-08-07). 상세는 [`identity-roadmap.md`](./identity-roadmap.md).
+  - **관리 대역 확대**: uid `3000–9999` / 팀 gid `10000–19999`. 온프렘 AD에 예약을 요청할 대역이고,
+    한 번 정하면 넓히기 어렵다(재번호는 ZFS 스냅샷 때문에 사실상 불가능). 미배포 상태라 이전 비용 0.
+    `TestDefaultIDBand`가 대역을 고정.
+  - **`smb.conf` mode 버그 수정(실사용 영향)**: `create mask`만 있고 `force create mode`가 없어
+    Samba의 `(요청 & mask) | force` 산술이 팀 파일을 `0644 & 0660 = 0640`, 폴더를 `0755 & 2770 = 0750`으로
+    떨어뜨리고 있었다 → **팀원이 읽기만 되고 쓰지 못함**. 클라이언트에는 단서가 없다. force 두 줄 추가로
+    파일 `0660`·폴더 `2770` 고정. `[homes]`도 `0600`/`0700` 고정(이전엔 mask가 아예 없었다).
+    `TestGeneratedMasksPinTheMode`가 산술 자체를 회귀 테스트.
+  - **`export --format csv|ldif`**: 지금 쓰는 uid/gid를 AD의 RFC2307 `uidNumber`/`gidNumber`로 심기 위한 출력.
+  - **`detach`**: 로컬 passwd/UPG/tdbsam만 제거하고 홈은 보존(`Provider.RemoveAccount`, 3개 백엔드 전부).
+    roster 선언을 전제로만 실행되고, 직후 재조회해 **다른 uid로 해석되면 에러**.
+  - **`mode: audit` + `audit`**: 계정 소유권이 디렉터리로 넘어간 뒤의 상태. `apply`/`purge`는 거부하고,
+    roster ↔ 실제 해석 결과를 대조해 missing/id-mismatch/tombstone-live/undeclared/collision을 리포트.
 - 🚧 **남음**: 파일 서버 실배포. (pw 실검증은 FreeBSD 호스트 필요 — Linux CI 불가.)
+- 🚧 **정리 대상**: `purge`가 `userdel`을 직접 호출해 shadow-utils 전용이다. `detach`가 쓰는
+  `Provider.RemoveAccount`처럼 인터페이스 뒤로 옮기면 busybox/pw에서도 동작한다.
 - 라이선스: **Apache-2.0**(메인테이너 지정).
 
 **0단계 — 스캐폴딩 정리**

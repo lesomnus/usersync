@@ -42,6 +42,7 @@ manage:
   gid: { min: 10000, max: 19999 }   # 팀 그룹
 protect:
   system_floor: 1000              # 이 값 미만은 불가침(코드가 최소 1000 보장)
+mode: manage                      # manage | audit — audit은 AD 인계 후(§3.7)
 on_out_of_scope: error            # error | skip
 seed_file: ./seed.secret
 provider: auto                    # auto | shadow-utils | busybox | pw
@@ -153,8 +154,31 @@ sudo ./usersync purge --yes skim   # 홈 tar 백업 → smbpasswd -x → userdel
 ```sh
 sudo ./usersync plan                       # 무변경이어야 정상. 뭔가 나오면 누가 손댄 것.
 sudo ./usersync export | diff - roster.yaml   # 실제↔선언 델타
+./usersync audit                           # roster의 번호 ↔ 실제 해석 결과 (root 불필요)
 ```
 cron/CI로 주기 실행하면 좋다. `--json`으로 기계가독 출력.
+
+`audit`은 `plan`과 다른 것을 본다. `plan`은 "무엇을 바꿔야 하는가"를, `audit`은 **"이름이 선언한 번호로 해석되는가"**를 묻는다. 후자는 계정을 남이 관리할 때(§3.7) 유일하게 남는 검사이고, 대역 안의 미선언 계정이나 두 이름이 한 번호를 공유하는 상황처럼 **roster 자체 검증으로는 볼 수 없는 것**을 잡는다.
+
+### 3.7 AD로 인계 (온프렘 AD 도입 시)
+
+전체 계획·근거·`smb.conf` 변경은 [`identity-roadmap.md`](./identity-roadmap.md)에 있다. 명령만 요약하면:
+
+```sh
+# 1) 지금 쓰는 번호를 AD에 심을 형태로 뽑는다 (uid를 바꾸면 안 되는 이유는 로드맵 §3)
+./usersync export --format csv > ids.csv
+
+# 2) 도메인 조인 후, nsswitch가 files→winbind 순이면 기존 동작은 그대로다.
+#    한 명씩 로컬 계정만 놓아준다. 홈은 그대로 남는다.
+sudo ./usersync detach skim
+
+# 3) 전원 인계가 끝나면 usersync.yaml에 mode: audit 을 넣고, 이후로는 감시만 한다.
+./usersync audit
+```
+
+- `detach`는 **roster가 그 사용자를 계속 선언할 때만** 실행된다. 그 항목이 uid 예약이자 복구 경로다 — 잘못되면 `usersync apply` 한 번으로 로컬 계정이 되살아난다.
+- `detach` 직후 이름을 다시 조회해 **다른 uid로 해석되면 에러로 중단**한다. 이름과 파일이 분리된 상태이므로 즉시 되돌려야 한다.
+- `mode: audit`에서는 `apply`/`purge`가 거부된다. `detach`와 `shares`는 계속 쓸 수 있다.
 
 ---
 
@@ -197,6 +221,7 @@ sudo ./usersync shares --reload    # 위 + smbd reload
 - **`duplicate uid`** — 다른(은퇴 포함) 항목이 같은 uid를 이미 점유. uid는 재사용 불가.
 - **SMB 상태가 안 보임(비-root export)** — `pdbedit`는 root 필요. 비-root `export`는 유저/그룹만 출력하고 SMB 상태는 경고 후 생략한다.
 - **provider 자동탐지 실패** — `provider: auto`가 `useradd`→`adduser`→`pw` 순으로 찾는다. 없으면 `provider:`로 명시.
+- **`refusing to apply: mode is "audit"`** — 설정이 계정 소유권을 디렉터리 서비스에 넘긴 상태(§3.7). 의도한 것이면 `usersync audit`을 쓰고, 소유권을 되찾으려면 `usersync.yaml`의 `mode`를 `manage`로 되돌린다.
 
 ---
 

@@ -7,7 +7,9 @@ setting SMB-only access (nologin + locked unix password + `smbpasswd`), and
 managing group folders — with a strict safety model and no dependencies beyond a
 single static Go binary.
 
-See [`plan.md`](./plan.md) for the full design.
+See [`plan.md`](./plan.md) for the full design and
+[`identity-roadmap.md`](./identity-roadmap.md) for why one password backs both
+the web and SMB paths, and what changes when an on-prem AD arrives.
 
 ## Model
 

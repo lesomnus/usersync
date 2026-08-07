@@ -459,21 +459,24 @@ type Samba interface {
    valid users = @<team>
    force group = <team>
    create mask = 0660
-   force create mode = 0660
    directory mask = 2770
    force directory mode = 2770
 ```
-> **`force …` 두 줄은 장식이 아니다.** Samba의 mode 산술은 `(요청 & mask) | force` 이고,
-> SMB에는 유닉스 mode가 흐르지 않으므로 "요청"은 서버가 DOS 속성에서 유도한 값(윈도우
-> 클라이언트 기준 파일 `0644`, 디렉터리 `0755`)이다. mask만 두면 팀 파일이
-> `0644 & 0660 = 0640`, 폴더가 `0755 & 2770 = 0750` 으로 떨어져 **팀원이 읽기만 되고
-> 쓰지 못한다** — 클라이언트에는 아무 단서도 안 보인다. 같은 값을 force 하면 파일 `0660`,
-> 폴더 `2770` 으로 고정된다. (setgid 비트 자체는 부모에서 커널이 전파하지만 **그룹 쓰기
-> 비트는 전파되지 않는다** — 그건 force 해야 한다.) `internal/smbconf` 의
-> `TestGeneratedMasksPinTheMode` 가 이 산술을 회귀 테스트로 고정해 둔다.
+> **`force directory mode` 한 줄만 장식이 아니다.** Samba 의 mode 산술은 `(base & mask) | force` 이고,
+> SMB 에는 유닉스 mode 가 흐르지 않으므로 `base` 는 클라이언트 요청이 아니라 **smbd 가 DOS 속성에서
+> 유도한 값**이다 — 파일 `0666`(archive 매핑 시 `0766`), 디렉터리 `0777`. 따라서 `create mask = 0660`
+> 만으로 팀 파일은 이미 `0660` 이고 **`force create mode` 는 아무것도 바꾸지 않는다**(넣지 않는다).
 >
-> `[homes]`는 같은 이유로 `0600`/`0700` 을 고정한다 — 홈은 비공개이므로 그 아래에
-> group·other 비트가 남으면 안 된다.
+> 반면 mask 는 비트를 **지우기만** 하므로 setgid 를 되돌릴 수 없다. 부모가 setgid 를 잃으면 그 아래
+> SMB 로 만든 폴더가 `0770`·setgid 없음이 되고, **그 안의 파일이 생성자 그룹을 따라가** 팀원이 수정하지
+> 못한다 — 한 단계 아래에서 벌어지고 클라이언트엔 단서가 없다. `force directory mode = 2770` 이 어느
+> 깊이에서든 setgid 를 복원한다.
+>
+> `[homes]` 는 같은 이유로 `0600`/`0700` 을 명시한다 — mask 가 없으면 전역 기본값 `0744/0755` 를 탄다.
+>
+> 이 숫자들은 추론이 아니라 **실제 smbd 로 측정한 값**이다. `scripts/verify-samba-modes.sh` 가 재현하고,
+> `internal/smbconf` 의 `TestGeneratedModesAreExact` / `TestForceDirectoryModeRestoresSetgid` /
+> `TestNoForceCreateMode` 가 회귀 테스트로 고정한다.
 
 > MVP에선 제외하고 수동 유지 가능(§admin-guide). 자주 팀이 바뀌면 Phase 2로 자동화.
 
@@ -540,11 +543,15 @@ type Samba interface {
   - **관리 대역 확대**: uid `3000–9999` / 팀 gid `10000–19999`. 온프렘 AD에 예약을 요청할 대역이고,
     한 번 정하면 넓히기 어렵다(재번호는 ZFS 스냅샷 때문에 사실상 불가능). 미배포 상태라 이전 비용 0.
     `TestDefaultIDBand`가 대역을 고정.
-  - **`smb.conf` mode 버그 수정(실사용 영향)**: `create mask`만 있고 `force create mode`가 없어
-    Samba의 `(요청 & mask) | force` 산술이 팀 파일을 `0644 & 0660 = 0640`, 폴더를 `0755 & 2770 = 0750`으로
-    떨어뜨리고 있었다 → **팀원이 읽기만 되고 쓰지 못함**. 클라이언트에는 단서가 없다. force 두 줄 추가로
-    파일 `0660`·폴더 `2770` 고정. `[homes]`도 `0600`/`0700` 고정(이전엔 mask가 아예 없었다).
-    `TestGeneratedMasksPinTheMode`가 산술 자체를 회귀 테스트.
+  - **`smb.conf` mode 정비**: Samba는 `(base & mask) | force` 로 mode 를 정하는데, `base` 는 클라이언트
+    요청이 아니라 **smbd 가 DOS 속성에서 유도한 값**(파일 `0666`, archive 매핑까지 `0766`, 디렉터리 `0777`)이다.
+    → `create mask = 0660` 만으로도 팀 파일은 이미 `0660` 이다. **`force create mode` 는 효과가 없어 넣지 않는다.**
+    반면 **`force directory mode = 2770` 은 유효하다**: mask 는 비트를 지우기만 하므로 setgid 를 되돌릴 수 없고,
+    부모가 setgid 를 잃으면 그 아래 SMB 로 만든 폴더가 `0770`(setgid 없음)이 되어 그 안의 파일이 생성자 그룹을
+    따라간다. `[homes]` 는 mask 가 아예 없어 전역 기본값 `0744/0755` 를 타고 있었다 → `0600`/`0700` 로 고정.
+    **실제 smbd 로 검증**: `scripts/verify-samba-modes.sh`(부모 `2770` → mask 만으로 `0660`/`2770`,
+    부모 `0770` → mask 만 `0770`·force 있으면 `2770`). 이 산술을 `TestGeneratedModesAreExact` /
+    `TestForceDirectoryModeRestoresSetgid` / `TestNoForceCreateMode` 가 고정한다.
   - **`export --format csv|ldif`**: 지금 쓰는 uid/gid를 AD의 RFC2307 `uidNumber`/`gidNumber`로 심기 위한 출력.
   - **`detach`**: 로컬 passwd/UPG/tdbsam만 제거하고 홈은 보존(`Provider.RemoveAccount`, 3개 백엔드 전부).
     roster 선언을 전제로만 실행되고, 직후 재조회해 **다른 uid로 해석되면 에러**.

@@ -398,7 +398,7 @@ func TestSmbConfGenerate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed, err := smbconf.Apply(context.Background(), conf, s.groupsBase, fullRoster().Groups, run.Exec{}, false)
+	changed, err := smbconf.Apply(context.Background(), conf, s.homeBase, s.groupsBase, fullRoster().Groups, run.Exec{}, false)
 	if err != nil {
 		t.Fatalf("smbconf apply: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestSmbConfGenerate(t *testing.T) {
 		t.Errorf("real testparm rejected the generated smb.conf: %v", err)
 	}
 	// idempotent: a second Apply is a no-op.
-	if changed, err := smbconf.Apply(context.Background(), conf, s.groupsBase, fullRoster().Groups, run.Exec{}, false); err != nil {
+	if changed, err := smbconf.Apply(context.Background(), conf, s.homeBase, s.groupsBase, fullRoster().Groups, run.Exec{}, false); err != nil {
 		t.Fatal(err)
 	} else if changed {
 		t.Error("second smbconf apply should be a no-op")

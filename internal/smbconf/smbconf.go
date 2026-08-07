@@ -31,8 +31,9 @@ func oneLine(s string) string {
 
 // Render builds the managed block (markers included) from the roster groups. It
 // emits a single [homes] section plus one [<team>] section per group, sorted by
-// name for deterministic output. groupsBase is the group folder root.
-func Render(groups []roster.Group, groupsBase string) string {
+// name for deterministic output. homeBase and groupsBase are the home and group
+// folder roots.
+func Render(groups []roster.Group, homeBase, groupsBase string) string {
 	gs := append([]roster.Group(nil), groups...)
 	sort.Slice(gs, func(i, j int) bool { return gs[i].Name < gs[j].Name })
 
@@ -42,20 +43,23 @@ func Render(groups []roster.Group, groupsBase string) string {
 
 	b.WriteString("\n[homes]\n")
 	b.WriteString("   comment = Home Directories\n")
+	// Without an explicit path, [homes] serves the home recorded in passwd.
+	// usersync sets that itself (useradd -d), so the two agree today — but that
+	// is an unstated dependency between two things that can be changed
+	// independently, and if paths.home is ever repointed without a re-apply the
+	// share silently keeps serving the old location.
+	fmt.Fprintf(&b, "   path = %s\n", oneLine(filepath.Join(homeBase, "%U")))
 	b.WriteString("   browseable = no\n")
 	b.WriteString("   read only = no\n")
 	b.WriteString("   valid users = %S\n")
-	// Pin the modes. Samba computes mode = (requested & mask) | force, and a
-	// Windows client's "requested" comes from DOS attributes (typically 0644 for
-	// files, 0755 for directories) — SMB carries no unix mode. Setting only the
-	// mask leaves the result at the mercy of that request and of whatever the
-	// global smb.conf defaults happen to be; setting mask and force to the same
-	// value pins the mode exactly, for every client. A home is private (0700), so
-	// nothing beneath it should carry group or other bits.
+	// A home is private, so nothing beneath it should carry group or other bits.
+	// Without a mask here the section inherits the global default (0744/0755),
+	// which leaves those bits set — contained by the 0700 home today, but it also
+	// means a file created over SMB and one created through the web get different
+	// modes, and the two paths are supposed to agree. See scripts/verify-samba-modes.sh
+	// for how these numbers were checked against a real smbd.
 	b.WriteString("   create mask = 0600\n")
-	b.WriteString("   force create mode = 0600\n")
 	b.WriteString("   directory mask = 0700\n")
-	b.WriteString("   force directory mode = 0700\n")
 
 	for _, g := range gs {
 		// Defense-in-depth: names/descriptions are validated at roster load, but
@@ -72,16 +76,26 @@ func Render(groups []roster.Group, groupsBase string) string {
 		b.WriteString("   read only = no\n")
 		fmt.Fprintf(&b, "   valid users = @%s\n", name)
 		fmt.Fprintf(&b, "   force group = %s\n", name)
-		// The force modes are load-bearing here, not belt-and-braces. With the mask
-		// alone a new team file lands on 0644 & 0660 = 0640 and a new folder on
-		// 0755 & 2770 = 0750 — readable by the team but NOT writable, so every
-		// colleague gets "read-only" on anything a teammate created over SMB, and
-		// the cause is invisible from the client. Forcing the same bits pins files
-		// at 0660 and folders at 2770 exactly. (The setgid bit itself also
-		// propagates from the parent via the kernel, but the group-write bit does
-		// not — that one has to be forced.)
+		// Samba computes a new object's mode as (base & mask) | force, where base
+		// comes from the DOS attributes — SMB carries no unix mode. The base is
+		// 0666 for files (0766 once the archive attribute maps onto the owner
+		// execute bit) and 0777 for directories, so the mask alone already yields
+		// 0660 and 0770 here. Only `force directory mode` earns its place, and it
+		// earns it for one specific reason:
+		//
+		// A mask can only CLEAR bits, so it can never restore setgid. If the
+		// parent directory ever loses its setgid bit, every folder created beneath
+		// it over SMB comes out 0770 with no setgid, and files created inside
+		// those then take the creator's own group instead of the team's — the
+		// teammate-cannot-write failure, one level down and invisible from the
+		// client. Forcing 2770 puts setgid back at any depth regardless of the
+		// parent's state.
+		//
+		// `force create mode` is deliberately NOT set: it changes nothing under
+		// this configuration, and it would override the DOS-attribute mapping in
+		// one that maps read-only onto the permission bits. Both claims were
+		// checked against a real smbd — see scripts/verify-samba-modes.sh.
 		b.WriteString("   create mask = 0660\n")
-		b.WriteString("   force create mode = 0660\n")
 		b.WriteString("   directory mask = 2770\n")
 		b.WriteString("   force directory mode = 2770\n")
 	}
@@ -136,7 +150,7 @@ func Reload(ctx context.Context, r run.Runner) error {
 // backs the original up to confPath+".bak", writes the new content, and (if
 // reload) reloads smbd — restoring the original if the reload fails. It reports
 // whether the file changed. A no-op (block already current) makes no writes.
-func Apply(ctx context.Context, confPath, groupsBase string, groups []roster.Group, r run.Runner, reload bool) (changed bool, err error) {
+func Apply(ctx context.Context, confPath, homeBase, groupsBase string, groups []roster.Group, r run.Runner, reload bool) (changed bool, err error) {
 	orig, err := os.ReadFile(confPath)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", confPath, err)
@@ -145,7 +159,7 @@ func Apply(ctx context.Context, confPath, groupsBase string, groups []roster.Gro
 	if fi, err := os.Stat(confPath); err == nil {
 		mode = fi.Mode().Perm()
 	}
-	updated := Splice(string(orig), Render(groups, groupsBase))
+	updated := Splice(string(orig), Render(groups, homeBase, groupsBase))
 	if updated == string(orig) {
 		return false, nil
 	}

@@ -38,7 +38,7 @@ func NewCmdShares() *xli.Command {
 			write = write || reload
 
 			if !write {
-				cmd.Print(smbconf.Render(ro.Groups, c.Paths.Groups))
+				cmd.Print(smbconf.Render(ro.Groups, c.Paths.Home, c.Paths.Groups))
 				return nil
 			}
 
@@ -55,7 +55,7 @@ func NewCmdShares() *xli.Command {
 			if p, ok := flg.Get[string](cmd, "smb-conf"); ok && p != "" {
 				path = p
 			}
-			changed, err := smbconf.Apply(ctx, path, c.Paths.Groups, ro.Groups, run.Exec{}, reload)
+			changed, err := smbconf.Apply(ctx, path, c.Paths.Home, c.Paths.Groups, ro.Groups, run.Exec{}, reload)
 			if err != nil {
 				return err
 			}

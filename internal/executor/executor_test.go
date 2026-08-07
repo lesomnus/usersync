@@ -39,6 +39,16 @@ func (f fakeProvider) LockPassword(_ context.Context, user string) error {
 	return nil
 }
 
+// RemoveAccount is never reached through the executor — `detach` calls the
+// provider directly, and no reconcile Action maps to it. It is here to satisfy
+// the interface, and it logs so that a future action that DID route through the
+// executor would show up in these ordered-operation assertions rather than
+// passing silently.
+func (f fakeProvider) RemoveAccount(_ context.Context, user string) error {
+	*f.log = append(*f.log, "RemoveAccount("+user+")")
+	return nil
+}
+
 type fakeSamba struct {
 	log   *[]string
 	accts map[string]samba.Account

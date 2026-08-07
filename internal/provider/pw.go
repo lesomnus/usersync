@@ -88,6 +88,24 @@ func (p *pw) LockPassword(ctx context.Context, user string) error {
 	return nil
 }
 
+// RemoveAccount deletes the user and its UPG, keeping the home directory.
+// `pw userdel` is deliberately called WITHOUT -r, so the files stay on disk
+// owned by the numeric uid. It is idempotent — an absent user or group is
+// skipped.
+func (p *pw) RemoveAccount(ctx context.Context, user string) error {
+	if p.present(ctx, "usershow", user) {
+		if _, err := p.r.Run(ctx, "", "pw", "userdel", "-n", user); err != nil {
+			return fmt.Errorf("pw userdel %s: %w", user, err)
+		}
+	}
+	if p.present(ctx, "groupshow", user) {
+		if _, err := p.r.Run(ctx, "", "pw", "groupdel", "-n", user); err != nil {
+			return fmt.Errorf("pw groupdel %s: %w", user, err)
+		}
+	}
+	return nil
+}
+
 // present reports whether `pw <show> <name>` finds an entry. pw exits non-zero
 // when the name is unknown, which means absent; a non-zero exit is therefore not
 // treated as an error.

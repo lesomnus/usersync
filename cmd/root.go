@@ -23,6 +23,7 @@ func NewCmdRoot() *xli.Command {
 			NewCmdPlan(),
 			NewCmdApply(),
 			NewCmdExport(),
+			NewCmdDetach(),
 			NewCmdPurge(),
 			NewCmdShares(),
 			NewCmdPasswd(),

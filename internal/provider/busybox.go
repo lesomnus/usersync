@@ -146,6 +146,24 @@ func (b *busybox) LockPassword(ctx context.Context, user string) error {
 	return nil
 }
 
+// RemoveAccount deletes the user and its UPG, keeping the home directory.
+// busybox's `deluser` leaves the home alone unless --remove-home is passed, so
+// the files stay on disk owned by the numeric uid. It is idempotent — an absent
+// user or group is skipped.
+func (b *busybox) RemoveAccount(ctx context.Context, user string) error {
+	if b.present(ctx, "passwd", user) {
+		if _, err := b.r.Run(ctx, "", "deluser", user); err != nil {
+			return fmt.Errorf("deluser %s: %w", user, err)
+		}
+	}
+	if b.present(ctx, "group", user) {
+		if _, err := b.r.Run(ctx, "", "delgroup", user); err != nil {
+			return fmt.Errorf("delgroup %s: %w", user, err)
+		}
+	}
+	return nil
+}
+
 // present reports whether `getent <db> <key>` finds an entry. getent exits
 // non-zero (or prints nothing) when the key is unknown, both of which mean
 // absent; a non-zero exit is therefore not treated as an error.

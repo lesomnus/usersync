@@ -177,6 +177,26 @@ func (s *shadowUtils) LockPassword(ctx context.Context, user string) error {
 	return nil
 }
 
+// RemoveAccount deletes the user and its UPG, keeping the home directory.
+// `userdel` is deliberately called WITHOUT -r: the files stay on disk, owned by
+// the numeric uid, waiting for the directory service to resolve that number
+// again. It is idempotent — an absent user or group is skipped.
+func (s *shadowUtils) RemoveAccount(ctx context.Context, user string) error {
+	if s.present(ctx, "passwd", user) {
+		if _, err := s.r.Run(ctx, "", "userdel", user); err != nil {
+			return fmt.Errorf("userdel %s: %w", user, err)
+		}
+	}
+	// userdel already drops the UPG when it is the user's primary group and has
+	// no other members; this mops up the case where it does not.
+	if s.present(ctx, "group", user) {
+		if _, err := s.r.Run(ctx, "", "groupdel", user); err != nil {
+			return fmt.Errorf("groupdel %s: %w", user, err)
+		}
+	}
+	return nil
+}
+
 // present reports whether `getent <db> <key>` finds an entry. getent exits
 // non-zero (or prints nothing) when the key is unknown, both of which mean
 // absent; a non-zero exit is therefore not treated as an error.

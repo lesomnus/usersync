@@ -40,6 +40,7 @@ usersync plan            # dry-run: collect state, diff against roster, print ac
 usersync plan --commands # also print the exact backend commands each action would run
 usersync apply           # execute the actions (root; idempotent; never deletes)
 usersync export          # print the current managed state as a roster.yaml (bootstrap / drift)
+usersync detach <user>   # release the LOCAL account, keep the home (hand the name to AD)
 usersync purge <user>    # DANGEROUS: archive home, delete account + UPG, reserve the uid
 usersync shares          # print the smb.conf [homes]+[<team>] block from the roster
 usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kept); --reload reloads smbd
@@ -80,6 +81,19 @@ the entry and set its `status`:
 
 Uniqueness of names and uids is enforced across all statuses, so a `reserved`
 tombstone permanently blocks its uid from reuse.
+
+## Handing a user over to a directory service
+
+`detach` is the migration counterpart of `purge`: it deletes the local unix
+account, its UPG and its tdbsam entry, but leaves the home directory and every
+file in it alone, so winbind/AD can answer for that name instead. It refuses
+unless the roster still declares the user — that entry keeps the uid reserved and
+makes the step reversible, since `usersync apply` recreates the local account.
+
+After releasing the account it looks the name up again and **fails** if it now
+resolves to a different uid: the files are owned by a number, so a name that
+comes back pointing somewhere else means the data and the identity have come
+apart. See [`identity-roadmap.md`](./identity-roadmap.md).
 
 ## Safety
 

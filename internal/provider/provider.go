@@ -50,6 +50,16 @@ type Provider interface {
 
 	// LockPassword locks the unix password so SSH/console login is impossible.
 	LockPassword(ctx context.Context, user string) error
+
+	// RemoveAccount deletes the unix user and its UPG but leaves the home
+	// directory and everything in it on disk. It is idempotent: an absent user
+	// (or UPG) is a no-op.
+	//
+	// This is "release the local identity", not "delete the user": it exists so a
+	// directory service (winbind/AD) can take a name over one account at a time
+	// while the files — owned by numeric uid — stay exactly where they are.
+	// Destroying data is purge's job, and only purge's.
+	RemoveAccount(ctx context.Context, user string) error
 }
 
 // Detect selects a backend by name; "auto"/"" probes PATH in order

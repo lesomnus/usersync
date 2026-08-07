@@ -456,8 +456,22 @@ type Samba interface {
    valid users = @<team>
    force group = <team>
    create mask = 0660
+   force create mode = 0660
    directory mask = 2770
+   force directory mode = 2770
 ```
+> **`force …` 두 줄은 장식이 아니다.** Samba의 mode 산술은 `(요청 & mask) | force` 이고,
+> SMB에는 유닉스 mode가 흐르지 않으므로 "요청"은 서버가 DOS 속성에서 유도한 값(윈도우
+> 클라이언트 기준 파일 `0644`, 디렉터리 `0755`)이다. mask만 두면 팀 파일이
+> `0644 & 0660 = 0640`, 폴더가 `0755 & 2770 = 0750` 으로 떨어져 **팀원이 읽기만 되고
+> 쓰지 못한다** — 클라이언트에는 아무 단서도 안 보인다. 같은 값을 force 하면 파일 `0660`,
+> 폴더 `2770` 으로 고정된다. (setgid 비트 자체는 부모에서 커널이 전파하지만 **그룹 쓰기
+> 비트는 전파되지 않는다** — 그건 force 해야 한다.) `internal/smbconf` 의
+> `TestGeneratedMasksPinTheMode` 가 이 산술을 회귀 테스트로 고정해 둔다.
+>
+> `[homes]`는 같은 이유로 `0600`/`0700` 을 고정한다 — 홈은 비공개이므로 그 아래에
+> group·other 비트가 남으면 안 된다.
+
 > MVP에선 제외하고 수동 유지 가능(§admin-guide). 자주 팀이 바뀌면 Phase 2로 자동화.
 
 ---

@@ -45,6 +45,17 @@ func Render(groups []roster.Group, groupsBase string) string {
 	b.WriteString("   browseable = no\n")
 	b.WriteString("   read only = no\n")
 	b.WriteString("   valid users = %S\n")
+	// Pin the modes. Samba computes mode = (requested & mask) | force, and a
+	// Windows client's "requested" comes from DOS attributes (typically 0644 for
+	// files, 0755 for directories) — SMB carries no unix mode. Setting only the
+	// mask leaves the result at the mercy of that request and of whatever the
+	// global smb.conf defaults happen to be; setting mask and force to the same
+	// value pins the mode exactly, for every client. A home is private (0700), so
+	// nothing beneath it should carry group or other bits.
+	b.WriteString("   create mask = 0600\n")
+	b.WriteString("   force create mode = 0600\n")
+	b.WriteString("   directory mask = 0700\n")
+	b.WriteString("   force directory mode = 0700\n")
 
 	for _, g := range gs {
 		// Defense-in-depth: names/descriptions are validated at roster load, but
@@ -61,8 +72,18 @@ func Render(groups []roster.Group, groupsBase string) string {
 		b.WriteString("   read only = no\n")
 		fmt.Fprintf(&b, "   valid users = @%s\n", name)
 		fmt.Fprintf(&b, "   force group = %s\n", name)
+		// The force modes are load-bearing here, not belt-and-braces. With the mask
+		// alone a new team file lands on 0644 & 0660 = 0640 and a new folder on
+		// 0755 & 2770 = 0750 — readable by the team but NOT writable, so every
+		// colleague gets "read-only" on anything a teammate created over SMB, and
+		// the cause is invisible from the client. Forcing the same bits pins files
+		// at 0660 and folders at 2770 exactly. (The setgid bit itself also
+		// propagates from the parent via the kernel, but the group-write bit does
+		// not — that one has to be forced.)
 		b.WriteString("   create mask = 0660\n")
+		b.WriteString("   force create mode = 0660\n")
 		b.WriteString("   directory mask = 2770\n")
+		b.WriteString("   force directory mode = 2770\n")
 	}
 
 	b.WriteString(EndMarker + "\n")

@@ -164,7 +164,7 @@ func (b *busybox) LookupGroup(ctx context.Context, name string) (uint32, bool, e
 // busybox's `deluser` leaves the home alone unless --remove-home is passed, so
 // the files stay on disk owned by the numeric uid. It is idempotent — an absent
 // user or group is skipped.
-func (b *busybox) RemoveAccount(ctx context.Context, user string) error {
+func (b *busybox) RemoveAccount(ctx context.Context, user string, opts RemoveOpts) error {
 	uid, found := localEntry(b.etc, "passwd", user)
 	if found {
 		// busybox's deluser leaves the home alone unless --remove-home is passed.
@@ -172,7 +172,7 @@ func (b *busybox) RemoveAccount(ctx context.Context, user string) error {
 			return fmt.Errorf("deluser %s: %w", user, err)
 		}
 	}
-	if found && isUPG(b.etc, user, uid) {
+	if found && !opts.KeepUPG && isUPG(b.etc, user, uid) {
 		if _, err := b.r.Run(ctx, "", "delgroup", user); err != nil {
 			return fmt.Errorf("delgroup %s: %w", user, err)
 		}

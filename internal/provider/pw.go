@@ -106,7 +106,7 @@ func (p *pw) LookupGroup(ctx context.Context, name string) (uint32, bool, error)
 // `pw userdel` is deliberately called WITHOUT -r, so the files stay on disk
 // owned by the numeric uid. It is idempotent — an absent user or group is
 // skipped.
-func (p *pw) RemoveAccount(ctx context.Context, user string) error {
+func (p *pw) RemoveAccount(ctx context.Context, user string, opts RemoveOpts) error {
 	uid, found := localEntry(p.etc, "passwd", user)
 	if found {
 		// No -r, so the files stay on disk owned by the numeric uid.
@@ -114,7 +114,7 @@ func (p *pw) RemoveAccount(ctx context.Context, user string) error {
 			return fmt.Errorf("pw userdel %s: %w", user, err)
 		}
 	}
-	if found && isUPG(p.etc, user, uid) {
+	if found && !opts.KeepUPG && isUPG(p.etc, user, uid) {
 		if _, err := p.r.Run(ctx, "", "pw", "groupdel", "-n", user); err != nil {
 			return fmt.Errorf("pw groupdel %s: %w", user, err)
 		}

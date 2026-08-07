@@ -195,7 +195,7 @@ func (s *shadowUtils) LookupGroup(ctx context.Context, name string) (uint32, boo
 // `userdel` is deliberately called WITHOUT -r: the files stay on disk, owned by
 // the numeric uid, waiting for the directory service to resolve that number
 // again. It is idempotent — an absent user or group is skipped.
-func (s *shadowUtils) RemoveAccount(ctx context.Context, user string) error {
+func (s *shadowUtils) RemoveAccount(ctx context.Context, user string, opts RemoveOpts) error {
 	uid, found := localEntry(s.etc, "passwd", user)
 	if found {
 		// No -r: the files stay on disk, owned by the numeric uid, waiting for the
@@ -207,7 +207,7 @@ func (s *shadowUtils) RemoveAccount(ctx context.Context, user string) error {
 	// userdel already drops the UPG when it is the user's primary group with no
 	// other members; this mops up the case where it does not. Only if it really
 	// is the UPG — see isUPG.
-	if found && isUPG(s.etc, user, uid) {
+	if found && !opts.KeepUPG && isUPG(s.etc, user, uid) {
 		if _, err := s.r.Run(ctx, "", "groupdel", user); err != nil {
 			return fmt.Errorf("groupdel %s: %w", user, err)
 		}

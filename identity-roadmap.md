@@ -149,8 +149,8 @@ Import-Csv ids.csv | Where-Object type -eq 'user'  |
    workgroup = CORP
 
    winbind use default domain = yes      # @team-a 표기 유지 → shares 블록 무변경
-   template shell = /usr/sbin/nologin    # ★ SMB 전용 성질 유지 (없으면 도메인 유저가 셸을 얻는다)
-   template homedir = /research/home/%U  # ★ [homes]가 계속 올바른 곳을 가리킨다
+   template shell = /usr/sbin/nologin    # 기본값도 /bin/false 지만 의도를 드러내 둔다
+   template homedir = /research/home/%U  # ★ 필수. 기본값이 /home/%D/%U 라 빠뜨리면 홈이 어긋난다
 
    idmap config * : backend = tdb
    idmap config * : range = 100000-199999
@@ -162,7 +162,10 @@ Import-Csv ids.csv | Where-Object type -eq 'user'  |
 
 - `idmap config CORP : range`는 **필터로도 동작**한다. 대역 전체(3000–19999)를 잡아야 UPG gid까지 해석된다.
 - `winbind use default domain = yes` 덕분에 `valid users = @team-a`가 그대로 유효하다 → **`usersync shares`가 생성하는 블록은 변경 불필요.**
-- `template shell`을 빠뜨리면 도메인 사용자 전원이 로그인 셸을 얻는다. plan.md §1의 "SMB 전용" 3종 세트가 무너지는 지점이다.
+- **둘 중 진짜 위험한 쪽은 `template homedir` 이다.** 기본값이 `/home/%D/%U` 라서, 빠뜨리면 `[homes]` 가
+  엉뚱한 경로를 서비스하고 사용자는 빈 홈을 본다. 반드시 명시할 것.
+- `template shell` 은 기본값이 이미 `/bin/false` 이므로(로그인 셸이 아니다) 빠뜨려도 셸이 열리지는 않는다.
+  명시하는 이유는 위험해서가 아니라 plan.md §1 의 "SMB 전용" 3종 세트를 설정에 드러내 두기 위해서다.
 - 조인 전제: DNS가 DC를 가리킬 것, 시각 동기(Kerberos ±5분), 머신 계정 생성 권한.
 
 > winbind 옵션명은 배포 대상 Samba 버전 문서로 재확인할 것. 특히 `unix_primary_group`과 `template homedir`의 상호작용은 컨테이너에서 리허설을 권한다 — `internal/integration`에 이미 통합 테스트 하네스가 있으므로 Samba AD DC 컨테이너를 붙이면 실제로 재현할 수 있다.
@@ -202,7 +205,7 @@ getent passwd skim       # ★ uid가 3001인가 — 이거 하나면 전환은 
 로컬 항목을 지워야 winbind가 그 이름을 넘겨받는다. 이것이 `detach`다.
 
 ```sh
-usersync detach skim
+usersync detach --keep-upg skim   # --keep-upg 는 Step 5 참고
 ```
 
 `detach`는 로컬 passwd/UPG/tdbsam 항목만 지우고 **홈 디렉터리는 그대로 둔다.** 그리고 지운 직후 이름을 다시 조회해:
@@ -225,7 +228,9 @@ usersync audit          # roster와 실제 해석 결과가 일치하는가. cro
 
 `gidNumber = uid`를 AD에 넣으면 번호는 보존되지만, 그 gid에 대응하는 **그룹 객체가 없어 `ls -l`이 이름 대신 숫자를 보여준다.** 세 갈래:
 
-- **(권장) `group: files winbind`를 유지하고 로컬 `/etc/group`의 UPG 항목만 남긴다** — 이름 해석 복구, 비용 거의 0
+- **(권장) `group: files winbind`를 유지하고 로컬 `/etc/group`의 UPG 항목만 남긴다** — 이름 해석 복구, 비용 거의 0.
+  단 **Step 3 에서 `usersync detach --keep-upg` 를 써야 한다.** 기본 `detach` 는 UPG 도 함께 지우므로,
+  그냥 진행한 뒤 이 방법을 택하려면 `groupadd -g <uid> <name>` 으로 전원 분량을 손으로 되살려야 한다.
 - AD에 사용자당 그룹 객체 생성 — 정석이지만 객체 수가 두 배
 - UPG 포기 — 홈이 `0700`이라 권한상 무해하나 기존 파일의 gid가 미아가 된다
 

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/lesomnus/usersync/internal/idrange"
+	"github.com/lesomnus/usersync/internal/provider"
 	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/xli"
@@ -76,6 +77,7 @@ func NewCmdDetach() *xli.Command {
 			&flg.String{Name: "roster", Brief: "roster that must still declare the user", Value: z.Ptr("roster.yaml")},
 			&flg.Switch{Name: "yes", Alias: 'y', Brief: "skip the confirmation prompt"},
 			&flg.Switch{Name: "keep-smb", Brief: "keep the tdbsam entry (default: remove it, so the local password cannot still authenticate)"},
+			&flg.Switch{Name: "keep-upg", Brief: "keep the user's private group in /etc/group so the gid on their files still resolves to a name"},
 		},
 
 		Handler: xli.OnRun(func(ctx context.Context, cmd *xli.Command, next xli.Next) error {
@@ -184,7 +186,8 @@ func NewCmdDetach() *xli.Command {
 					return fmt.Errorf("failed to remove the SMB account for %q, which would stay usable against the local passdb: %w", user, err)
 				}
 			}
-			if err := p.RemoveAccount(ctx, user); err != nil {
+			keepUPG, _ := flg.Get[bool](cmd, "keep-upg")
+			if err := p.RemoveAccount(ctx, user, provider.RemoveOpts{KeepUPG: keepUPG}); err != nil {
 				return err
 			}
 			cmd.Printf("released the local account for %q (uid %d)\n", user, uid)

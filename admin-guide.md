@@ -170,7 +170,7 @@ cron/CI로 주기 실행하면 좋다. `--json`으로 기계가독 출력.
 
 # 2) 도메인 조인 후, nsswitch가 files→winbind 순이면 기존 동작은 그대로다.
 #    한 명씩 로컬 계정만 놓아준다. 홈은 그대로 남는다.
-sudo ./usersync detach skim
+sudo ./usersync detach --keep-upg skim
 
 # 3) 전원 인계가 끝나면 usersync.yaml에 mode: audit 을 넣고, 이후로는 감시만 한다.
 ./usersync audit
@@ -178,6 +178,8 @@ sudo ./usersync detach skim
 
 - `detach`는 **roster가 그 사용자를 계속 선언할 때만** 실행된다. 그 항목이 uid 예약이자 복구 경로다 — 잘못되면 `usersync apply` 한 번으로 로컬 계정이 되살아난다.
 - `detach` 직후 이름을 다시 조회해 **다른 uid로 해석되면 에러로 중단**한다. 이름과 파일이 분리된 상태이므로 즉시 되돌려야 한다.
+- `--keep-upg`는 사용자의 개인 그룹(UPG)을 `/etc/group`에 남긴다. 남기지 않으면 AD에 대응 그룹 객체가 없어
+  `ls -l`이 그룹을 숫자로 표시한다([identity-roadmap.md](./identity-roadmap.md) §7 Step 5).
 - `mode: audit`에서는 `apply`/`purge`가 거부된다. `detach`와 `shares`는 계속 쓸 수 있다.
 
 ---

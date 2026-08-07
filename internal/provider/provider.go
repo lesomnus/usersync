@@ -14,6 +14,19 @@ import (
 	"github.com/lesomnus/usersync/internal/state"
 )
 
+// RemoveOpts tunes RemoveAccount.
+type RemoveOpts struct {
+	// KeepUPG leaves the user's private group in the local database.
+	//
+	// After a handover the directory usually has no group object whose gid equals
+	// the user's uid, so nothing resolves the group on the user's own files and
+	// `ls -l` shows a bare number. Keeping the local entry (with
+	// `group: files winbind`, where local wins) restores the name at almost no
+	// cost, and it is the recommended remedy in identity-roadmap.md — which is
+	// only available if this step does not destroy the entry first.
+	KeepUPG bool
+}
+
 // GroupSpec is the desired unix group for EnsureGroup.
 type GroupSpec struct {
 	Name string
@@ -61,6 +74,8 @@ type Provider interface {
 	// LookupGroup is LookupUser for a group name.
 	LookupGroup(ctx context.Context, name string) (gid uint32, found bool, err error)
 
+	// RemoveOpts tunes RemoveAccount.
+	//
 	// RemoveAccount deletes the unix user and its UPG but leaves the home
 	// directory and everything in it on disk. It is idempotent: an absent user
 	// (or UPG) is a no-op.
@@ -69,7 +84,7 @@ type Provider interface {
 	// directory service (winbind/AD) can take a name over one account at a time
 	// while the files — owned by numeric uid — stay exactly where they are.
 	// Destroying data is purge's job, and only purge's.
-	RemoveAccount(ctx context.Context, user string) error
+	RemoveAccount(ctx context.Context, user string, opts RemoveOpts) error
 }
 
 // Detect selects a backend by name; "auto"/"" probes PATH in order

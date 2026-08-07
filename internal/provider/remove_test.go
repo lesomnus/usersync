@@ -79,7 +79,7 @@ func TestRemoveAccountNeverDeletesTheHome(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake := &run.Fake{}
 			p := withEtc(newProvider(fake), etc)
-			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
+			if err := p.RemoveAccount(context.Background(), "alice", RemoveOpts{}); err != nil {
 				t.Fatalf("RemoveAccount: %v", err)
 			}
 			if len(fake.Calls) == 0 {
@@ -112,7 +112,7 @@ func TestRemoveAccountCommands(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake := &run.Fake{}
 			p := withEtc(newProvider(fake), etc)
-			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
+			if err := p.RemoveAccount(context.Background(), "alice", RemoveOpts{}); err != nil {
 				t.Fatalf("RemoveAccount: %v", err)
 			}
 			if got := fake.Commands(); !reflect.DeepEqual(got, want[name]) {
@@ -142,7 +142,7 @@ func TestRemoveAccountIsIdempotentWhenOnlyTheDirectoryAnswers(t *testing.T) {
 				return "", errNoSuchUser
 			}}
 			p := withEtc(newProvider(fake), etc)
-			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
+			if err := p.RemoveAccount(context.Background(), "alice", RemoveOpts{}); err != nil {
 				t.Fatalf("must be a no-op when there is no local entry, got %v", err)
 			}
 			if got := deleteVerbs(fake.Commands()); len(got) != 0 {
@@ -166,7 +166,7 @@ func TestRemoveAccountLeavesANonUPGGroupAlone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake := &run.Fake{}
 			p := withEtc(newProvider(fake), etc)
-			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
+			if err := p.RemoveAccount(context.Background(), "alice", RemoveOpts{}); err != nil {
 				t.Fatalf("RemoveAccount: %v", err)
 			}
 			for _, c := range deleteVerbs(fake.Commands()) {
@@ -185,3 +185,30 @@ func TestRemoveAccountLeavesANonUPGGroupAlone(t *testing.T) {
 // errNoSuchUser stands in for what a delete tool reports when the local database
 // has no such entry.
 var errNoSuchUser = errors.New("user 'alice' does not exist in /etc/passwd")
+
+// The recommended post-handover remedy in identity-roadmap.md is to keep the
+// local UPG entries so the gid on a user's own files still resolves to a name.
+// That is only available if this step can be told not to destroy them.
+func TestRemoveAccountKeepUPG(t *testing.T) {
+	etc := localDB(t,
+		"alice:x:3001:3001:Alice:/research/home/alice:/usr/sbin/nologin\n",
+		"alice:x:3001:\n")
+
+	for name, newProvider := range backends() {
+		t.Run(name, func(t *testing.T) {
+			fake := &run.Fake{}
+			p := withEtc(newProvider(fake), etc)
+			if err := p.RemoveAccount(context.Background(), "alice", RemoveOpts{KeepUPG: true}); err != nil {
+				t.Fatalf("RemoveAccount: %v", err)
+			}
+			for _, c := range deleteVerbs(fake.Commands()) {
+				if strings.Contains(c, "groupdel") || strings.Contains(c, "delgroup") {
+					t.Errorf("KeepUPG must leave the group alone, got %q", c)
+				}
+			}
+			if len(deleteVerbs(fake.Commands())) == 0 {
+				t.Error("the user account should still have been removed")
+			}
+		})
+	}
+}

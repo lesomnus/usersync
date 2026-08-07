@@ -101,17 +101,26 @@ any disagreement, so it runs from cron:
 
 ```
 AUDIT (roster vs. what the system resolves)
-  ✗ user  park             declared 3004, but resolves to 100042 — files stay on 3004
+  ✗ group team-a           declared 10001, but resolves to 19999 — files stay on 10001
   ✗ user  ghost            declared 3009, but the name does not resolve
   ✗ user  intruder         resolves to 3007 inside the managed band but is not in the roster
-  ✗ group team-a           declared 10001, but resolves to 19999 — files stay on 10001
+  ✗ user  park             declared 3004, but resolves to 100042 — files stay on 3004
 Summary: 4 users, 1 groups checked — 4 findings
+         (undeclared/collision checks saw 5 users and 4 groups in the enumeration)
 ```
 
 It also reports a reserved tombstone that has come back to life, and two names
 that resolve to the same number — neither of which the roster's own uniqueness
 check can see, because it validates what is *declared*, not what the directory
 *answers*.
+
+Declared entries are checked with a **keyed** lookup (one `getent passwd <name>`
+each), because winbind does not enumerate domain accounts unless
+`winbind enum users = yes` — reading them out of the enumeration would report
+every handed-over user as missing. The undeclared/collision sweep necessarily
+does come from the enumeration, so it sees local accounts and not the directory;
+the run prints how many names that was, so a clean result is not read as proof
+that nothing else is out there.
 
 ## Carrying the numbers into a directory
 

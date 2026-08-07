@@ -204,3 +204,71 @@ func TestExportersDoNotMutateInput(t *testing.T) {
 			ro.Groups[0].Name, ro.Users[0].Name, firstGroup, firstUser)
 	}
 }
+
+// Names on the export path come from a system scan, not the validated roster, so
+// they can hold characters that are structural inside a distinguished name. An
+// unescaped comma ends the relative DN early and makes the record address a
+// different object than the one it names — which ldapmodify applies without
+// complaint.
+func TestLDIFEscapesTheDN(t *testing.T) {
+	ro := &roster.Roster{
+		Groups: []roster.Group{{Name: `ops,OU=Admins`, GID: 10001}},
+		Users: []roster.User{
+			{Name: `a+b`, UID: 3001},
+			{Name: `back\slash`, UID: 3002},
+			{Name: `quote"d`, UID: 3003},
+			{Name: `semi;colon`, UID: 3004},
+			{Name: `lt<gt>`, UID: 3005},
+		},
+	}
+	var buf bytes.Buffer
+	if err := LDIF(&buf, ro, "DC=corp,DC=example,DC=com"); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+
+	for _, want := range []string{
+		`dn: CN=ops\,OU=Admins,DC=corp,DC=example,DC=com`,
+		`dn: CN=a\+b,DC=corp`,
+		`dn: CN=back\\slash,DC=corp`,
+		`dn: CN=quote\"d,DC=corp`,
+		`dn: CN=semi\;colon,DC=corp`,
+		`dn: CN=lt\<gt\>,DC=corp`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing escaped DN %q\n%s", want, out)
+		}
+	}
+
+	// Every dn: line must have exactly the base DN's comma count plus none of its
+	// own, i.e. the name must not have introduced extra RDN separators.
+	for _, ln := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(ln, "dn: ") {
+			continue
+		}
+		unescaped := 0
+		for i := 0; i < len(ln); i++ {
+			if ln[i] == ',' && (i == 0 || ln[i-1] != '\\') {
+				unescaped++
+			}
+		}
+		if unescaped != 3 { // DC=corp , DC=example , DC=com
+			t.Errorf("dn has %d unescaped commas, want 3: %s", unescaped, ln)
+		}
+	}
+}
+
+func TestEscapeDNEdges(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain":   "plain",
+		" lead":   `\ lead`,
+		"trail ":  `trail\ `,
+		"#hash":   `\#hash`,
+		"mid#dle": "mid#dle", // '#' is only special at the start
+		"a b":     "a b",
+	} {
+		if got := escapeDN(in); got != want {
+			t.Errorf("escapeDN(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

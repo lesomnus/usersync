@@ -61,7 +61,7 @@ func (f fakeProvider) LookupGroup(_ context.Context, name string) (uint32, bool,
 // the interface, and it logs so that a future action that DID route through the
 // executor would show up in these ordered-operation assertions rather than
 // passing silently.
-func (f fakeProvider) RemoveAccount(_ context.Context, user string) error {
+func (f fakeProvider) RemoveAccount(_ context.Context, user string, _ provider.RemoveOpts) error {
 	*f.log = append(*f.log, "RemoveAccount("+user+")")
 	return nil
 }

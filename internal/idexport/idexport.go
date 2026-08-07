@@ -107,7 +107,7 @@ func LDIF(w io.Writer, ro *roster.Roster, baseDN string) error {
 	b.WriteString("# applying, or use `--format csv`, which resolves identity by name instead.\n")
 
 	write := func(name string, attrs [][2]string) {
-		fmt.Fprintf(&b, "\ndn: CN=%s,%s\n", name, baseDN)
+		fmt.Fprintf(&b, "\ndn: CN=%s,%s\n", escapeDN(name), baseDN)
 		b.WriteString("changetype: modify\n")
 		for i, a := range attrs {
 			if i > 0 {
@@ -129,3 +129,36 @@ func LDIF(w io.Writer, ro *roster.Roster, baseDN string) error {
 }
 
 func u32(v uint32) string { return strconv.FormatUint(uint64(v), 10) }
+
+// escapeDN escapes a value for use inside a distinguished name, per RFC 4514.
+//
+// Names reaching this function are NOT the validated roster names: the export
+// path builds its roster from a system scan, so a name comes out of getent
+// exactly as /etc/group holds it — including whatever a hand edit put there,
+// which is the same class of account `audit` reports as undeclared. An
+// unescaped comma or plus would end the relative distinguished name early and
+// make the record address a different object than the one it names, which
+// ldapmodify would apply without complaint.
+func escapeDN(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i, r := range s {
+		switch {
+		// A leading '#' or space, and a trailing space, are only special at the
+		// edges of the value.
+		case i == 0 && (r == '#' || r == ' '),
+			i == len(s)-1 && r == ' ':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '"' || r == '+' || r == ',' || r == ';' || r == '<' || r == '>' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == 0:
+			// NUL has no escaped literal form; the hex escape is the only option.
+			b.WriteString("\\00")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}

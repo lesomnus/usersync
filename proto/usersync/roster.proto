@@ -37,7 +37,7 @@ message Group {
   // share name. Lowercase, no spaces.
   string name = 1;
 
-  // Group id. Must fall within the team-group range (default 7000-7999) and
+  // Group id. Must fall within the team-group range (default 10000-19999) and
   // must not collide with the user/UPG range.
   uint32 gid = 2;
 
@@ -51,7 +51,7 @@ message User {
   // UPG (user-private-group) name, and the SMB account name.
   string name = 1;
 
-  // User id. Must fall within the user range (default 3000-6999). The tool
+  // User id. Must fall within the user range (default 3000-9999). The tool
   // creates a matching UPG with gid == uid.
   uint32 uid = 2;
 

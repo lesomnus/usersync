@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -21,18 +23,43 @@ func backends() map[string]func(run.Runner) Provider {
 	}
 }
 
-// allPresent makes every presence probe report "found", so each backend takes
-// its full delete path. `pw` probes with its own show subcommands and reads a
-// nil error as present; getent-based backends read non-empty output as present.
-func allPresent(_, _ string, _ ...string) (string, error) { return "some:entry\n", nil }
-
-// allAbsent makes every presence probe report "not found" for each backend's own
-// convention: empty output for getent, a non-zero exit for `pw ... show`.
-func allAbsent(_, name string, args ...string) (string, error) {
-	if name == "pw" && len(args) > 0 && strings.HasSuffix(args[0], "show") {
-		return "", fmt.Errorf("pw: no such entry")
+// withEtc points a backend at a fixture instead of the real /etc.
+func withEtc(p Provider, etc string) Provider {
+	switch v := p.(type) {
+	case *shadowUtils:
+		v.etc = etc
+	case *busybox:
+		v.etc = etc
+	case *pw:
+		v.etc = etc
+	default:
+		panic("withEtc: unknown backend")
 	}
-	return "", nil
+	return p
+}
+
+// localDB writes a fixture /etc/passwd and /etc/group.
+func localDB(t *testing.T, passwd, group string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range map[string]string{"passwd": passwd, "group": group} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func deleteVerbs(cmds []string) []string {
+	var out []string
+	for _, c := range cmds {
+		for _, verb := range []string{"userdel", "groupdel", "deluser", "delgroup"} {
+			if strings.Contains(c, verb) {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
 }
 
 // RemoveAccount exists to release a NAME while the DATA stays put: the files in
@@ -44,11 +71,15 @@ func allAbsent(_, name string, args ...string) (string, error) {
 // for their files. No backend may ever emit one.
 func TestRemoveAccountNeverDeletesTheHome(t *testing.T) {
 	homeDestroying := []string{"-r", "-R", "--remove", "--remove-home", "--remove-all-files"}
+	etc := localDB(t,
+		"alice:x:3001:3001:Alice:/research/home/alice:/usr/sbin/nologin\n",
+		"alice:x:3001:\n")
 
 	for name, newProvider := range backends() {
 		t.Run(name, func(t *testing.T) {
-			fake := &run.Fake{Handler: allPresent}
-			if err := newProvider(fake).RemoveAccount(context.Background(), "alice"); err != nil {
+			fake := &run.Fake{}
+			p := withEtc(newProvider(fake), etc)
+			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
 				t.Fatalf("RemoveAccount: %v", err)
 			}
 			if len(fake.Calls) == 0 {
@@ -69,30 +100,19 @@ func TestRemoveAccountNeverDeletesTheHome(t *testing.T) {
 // has to say so here.
 func TestRemoveAccountCommands(t *testing.T) {
 	want := map[string][]string{
-		"shadow-utils": {
-			"getent passwd alice",
-			"userdel alice", // no -r
-			"getent group alice",
-			"groupdel alice",
-		},
-		"busybox": {
-			"getent passwd alice",
-			"deluser alice", // no --remove-home
-			"getent group alice",
-			"delgroup alice",
-		},
-		"pw": {
-			"pw usershow alice",
-			"pw userdel -n alice", // no -r
-			"pw groupshow alice",
-			"pw groupdel -n alice",
-		},
+		"shadow-utils": {"userdel alice", "groupdel alice"},
+		"busybox":      {"deluser alice", "delgroup alice"},
+		"pw":           {"pw userdel -n alice", "pw groupdel -n alice"},
 	}
+	etc := localDB(t,
+		"alice:x:3001:3001:Alice:/research/home/alice:/usr/sbin/nologin\n",
+		"alice:x:3001:\n")
 
 	for name, newProvider := range backends() {
 		t.Run(name, func(t *testing.T) {
-			fake := &run.Fake{Handler: allPresent}
-			if err := newProvider(fake).RemoveAccount(context.Background(), "alice"); err != nil {
+			fake := &run.Fake{}
+			p := withEtc(newProvider(fake), etc)
+			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
 				t.Fatalf("RemoveAccount: %v", err)
 			}
 			if got := fake.Commands(); !reflect.DeepEqual(got, want[name]) {
@@ -102,22 +122,66 @@ func TestRemoveAccountCommands(t *testing.T) {
 	}
 }
 
-// Detach can be retried: a run interrupted between the user delete and the group
-// delete, or simply repeated, must not fail on the parts already done.
-func TestRemoveAccountAbsentIsIdempotent(t *testing.T) {
+// Presence must be read from the LOCAL database, not from NSS.
+//
+// The delete tools only touch the local files. Probing NSS instead asks a
+// different question: once winbind answers for a name that has already been
+// detached — which is the whole point of detaching it — the probe reports
+// present, the delete finds nothing local to remove and fails, and an operation
+// documented as idempotent errors out. This is the second run of detach on a
+// handed-over user, and the retry of an interrupted one.
+func TestRemoveAccountIsIdempotentWhenOnlyTheDirectoryAnswers(t *testing.T) {
+	// Empty local database: the name resolves through the directory, not here.
+	etc := localDB(t, "root:x:0:0:root:/root:/bin/bash\n", "root:x:0:\n")
+
 	for name, newProvider := range backends() {
 		t.Run(name, func(t *testing.T) {
-			fake := &run.Fake{Handler: allAbsent}
-			if err := newProvider(fake).RemoveAccount(context.Background(), "alice"); err != nil {
-				t.Fatalf("RemoveAccount on an absent user must be a no-op, got %v", err)
+			// A runner that would FAIL any delete, standing in for `userdel alice`
+			// reporting that alice does not exist in /etc/passwd.
+			fake := &run.Fake{Handler: func(_, cmd string, args ...string) (string, error) {
+				return "", errNoSuchUser
+			}}
+			p := withEtc(newProvider(fake), etc)
+			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
+				t.Fatalf("must be a no-op when there is no local entry, got %v", err)
 			}
-			for _, c := range fake.Commands() {
-				for _, verb := range []string{"userdel", "groupdel", "deluser", "delgroup"} {
-					if strings.Contains(c, verb) {
-						t.Errorf("absent user must issue no deletes, got %q", c)
-					}
-				}
+			if got := deleteVerbs(fake.Commands()); len(got) != 0 {
+				t.Errorf("no local entry must issue no deletes, got %v", got)
 			}
 		})
 	}
 }
+
+// A group is only the user's private group when its gid equals the user's uid.
+// Deleting one merely because it shares the name would destroy a shared team
+// group and its member list — audit documents that such a group can exist — and
+// leave the group folder owned by a gid that resolves to nothing.
+func TestRemoveAccountLeavesANonUPGGroupAlone(t *testing.T) {
+	etc := localDB(t,
+		"alice:x:3001:3001:Alice:/research/home/alice:/usr/sbin/nologin\n",
+		// Same name, but a real team gid — not alice's private group.
+		"alice:x:12000:alice,bob\n")
+
+	for name, newProvider := range backends() {
+		t.Run(name, func(t *testing.T) {
+			fake := &run.Fake{}
+			p := withEtc(newProvider(fake), etc)
+			if err := p.RemoveAccount(context.Background(), "alice"); err != nil {
+				t.Fatalf("RemoveAccount: %v", err)
+			}
+			for _, c := range deleteVerbs(fake.Commands()) {
+				if strings.Contains(c, "groupdel") || strings.Contains(c, "delgroup") {
+					t.Errorf("must not delete a group that is not the UPG, got %q", c)
+				}
+			}
+			// The user itself must still go.
+			if len(deleteVerbs(fake.Commands())) == 0 {
+				t.Error("the user account should still have been removed")
+			}
+		})
+	}
+}
+
+// errNoSuchUser stands in for what a delete tool reports when the local database
+// has no such entry.
+var errNoSuchUser = errors.New("user 'alice' does not exist in /etc/passwd")

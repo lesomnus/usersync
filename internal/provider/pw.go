@@ -16,6 +16,9 @@ import (
 // root using run.Fake.
 type pw struct {
 	r run.Runner
+	// etc is the directory holding the local account databases. Empty means
+	// /etc; tests point it at a fixture.
+	etc string
 }
 
 // NewPw returns a Provider backed by FreeBSD's pw(8) and getent, executing every
@@ -104,12 +107,14 @@ func (p *pw) LookupGroup(ctx context.Context, name string) (uint32, bool, error)
 // owned by the numeric uid. It is idempotent — an absent user or group is
 // skipped.
 func (p *pw) RemoveAccount(ctx context.Context, user string) error {
-	if p.present(ctx, "usershow", user) {
+	uid, found := localEntry(p.etc, "passwd", user)
+	if found {
+		// No -r, so the files stay on disk owned by the numeric uid.
 		if _, err := p.r.Run(ctx, "", "pw", "userdel", "-n", user); err != nil {
 			return fmt.Errorf("pw userdel %s: %w", user, err)
 		}
 	}
-	if p.present(ctx, "groupshow", user) {
+	if found && isUPG(p.etc, user, uid) {
 		if _, err := p.r.Run(ctx, "", "pw", "groupdel", "-n", user); err != nil {
 			return fmt.Errorf("pw groupdel %s: %w", user, err)
 		}

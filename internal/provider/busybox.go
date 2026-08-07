@@ -18,6 +18,9 @@ import (
 // so it is fully unit-testable without root using run.Fake.
 type busybox struct {
 	r run.Runner
+	// etc is the directory holding the local account databases. Empty means
+	// /etc; tests point it at a fixture.
+	etc string
 }
 
 // NewBusybox returns a Provider backed by busybox (addgroup, adduser, delgroup,
@@ -162,12 +165,14 @@ func (b *busybox) LookupGroup(ctx context.Context, name string) (uint32, bool, e
 // the files stay on disk owned by the numeric uid. It is idempotent — an absent
 // user or group is skipped.
 func (b *busybox) RemoveAccount(ctx context.Context, user string) error {
-	if b.present(ctx, "passwd", user) {
+	uid, found := localEntry(b.etc, "passwd", user)
+	if found {
+		// busybox's deluser leaves the home alone unless --remove-home is passed.
 		if _, err := b.r.Run(ctx, "", "deluser", user); err != nil {
 			return fmt.Errorf("deluser %s: %w", user, err)
 		}
 	}
-	if b.present(ctx, "group", user) {
+	if found && isUPG(b.etc, user, uid) {
 		if _, err := b.r.Run(ctx, "", "delgroup", user); err != nil {
 			return fmt.Errorf("delgroup %s: %w", user, err)
 		}

@@ -46,16 +46,19 @@ func classifyDetach(oldUID, newUID uint32, resolved bool) detachVerdict {
 	}
 }
 
-// rosterDeclares reports whether the roster has an entry for the name, at ANY
-// status. Presence is what reserves the uid, so an entry — even a `reserved`
-// tombstone — is enough.
-func rosterDeclares(ro *roster.Roster, user string) bool {
-	for _, u := range ro.Users {
-		if u.Name == user {
-			return true
+// rosterEntry returns the roster's entry for the name, or nil.
+//
+// The caller needs the whole entry, not just presence: the DECLARED uid (an
+// entry reserves the number it names, which can disagree with what the account
+// currently carries) and the status (which decides whether `usersync apply` can
+// undo the detach).
+func rosterEntry(ro *roster.Roster, user string) *roster.User {
+	for i := range ro.Users {
+		if ro.Users[i].Name == user {
+			return &ro.Users[i]
 		}
 	}
-	return false
+	return nil
 }
 
 func NewCmdDetach() *xli.Command {
@@ -109,9 +112,29 @@ func NewCmdDetach() *xli.Command {
 				return err
 			}
 			warnSkipped(cmd, skipped)
-			if !rosterDeclares(ro, user) {
+			entry := rosterEntry(ro, user)
+			if entry == nil {
 				return fmt.Errorf("refusing to detach %q: the roster does not declare it, so detaching would free uid %d while %s still holds files owned by that number; add the entry back (any status reserves the uid) and retry",
 					user, uid, home)
+			}
+			declared := entry.UID
+			// A reserved entry is a tombstone: it says no account should exist. So
+			// `apply` will not recreate one, and the undo this command advertises
+			// does not exist for it. A local account standing against a tombstone is
+			// its own problem — `usersync audit` reports it as tombstone-live — and
+			// the tool for removing it deliberately is `purge`, which archives first.
+			if entry.Status == roster.Reserved {
+				return fmt.Errorf("refusing to detach %q: its roster entry is `status: reserved`, so `usersync apply` would not recreate the account and this step could not be undone. A reserved entry means no account should exist at all — use `usersync purge` (which archives the home first) if that is what you want",
+					user)
+			}
+			// The entry reserves the number it DECLARES. If the account has drifted
+			// onto a different one, that number is reserved by nobody: releasing the
+			// account frees it while the home still carries it, and the documented
+			// undo makes it worse rather than better — `usersync apply` recreates the
+			// account on the declared uid, so the files stay behind on the old one.
+			if declared != uid {
+				return fmt.Errorf("refusing to detach %q: the roster reserves uid %d but the account holds uid %d, so %s is owned by a number no entry reserves. `usersync apply` would recreate %q at %d and leave those files behind — run `usersync audit` and reconcile the drift first",
+					user, declared, uid, home, user, declared)
 			}
 
 			keepSmb, _ := flg.Get[bool](cmd, "keep-smb")
@@ -132,12 +155,33 @@ func NewCmdDetach() *xli.Command {
 				return err
 			}
 
+			// Whether the home is there BEFORE anything is removed. Checking only
+			// afterwards cannot tell "we destroyed it" from "it was never there",
+			// and a home that is simply absent — never created, or its dataset not
+			// mounted — must not be reported as data loss.
+			homeExisted := false
+			if _, err := os.Stat(home); err == nil {
+				homeExisted = true
+			}
+
 			// Drop the local SMB credential first. Left behind, it is a password that
 			// still authenticates if smbd ever falls back to the local passdb — a
 			// stale way in for an identity that is supposed to live in AD now.
+			//
+			// smbpasswd -x fails both when there is no account and when something is
+			// actually wrong (a locked tdb, a misconfigured passdb). Those must not
+			// read the same: look first, and treat a failure to delete an account we
+			// know exists as fatal, because continuing would leave exactly the stale
+			// credential this step is here to remove.
 			if !keepSmb {
-				if err := s.Delete(ctx, user); err != nil {
-					fmt.Fprintf(errW(cmd), "warning: could not remove the SMB account (none registered?): %v\n", err)
+				accts, err := s.Accounts(ctx)
+				if err != nil {
+					return fmt.Errorf("could not read the SMB accounts, so the local credential for %q cannot be confirmed removed: %w", user, err)
+				}
+				if _, ok := accts[user]; !ok {
+					fmt.Fprintf(errW(cmd), "note: %q has no SMB account registered; nothing to remove\n", user)
+				} else if err := s.Delete(ctx, user); err != nil {
+					return fmt.Errorf("failed to remove the SMB account for %q, which would stay usable against the local passdb: %w", user, err)
 				}
 			}
 			if err := p.RemoveAccount(ctx, user); err != nil {
@@ -146,8 +190,12 @@ func NewCmdDetach() *xli.Command {
 			cmd.Printf("released the local account for %q (uid %d)\n", user, uid)
 
 			// The home must survive: that is the entire difference from `purge`.
-			if _, err := os.Stat(home); err != nil {
-				return fmt.Errorf("BUG: the home %s did not survive the detach: %w", home, err)
+			if homeExisted {
+				if _, err := os.Stat(home); err != nil {
+					return fmt.Errorf("BUG: the home %s existed before the detach and does not now: %w", home, err)
+				}
+			} else {
+				fmt.Fprintf(errW(cmd), "note: %s did not exist before the detach either; nothing was lost\n", home)
 			}
 
 			newUID, _, lookupErr := lookupUser(ctx, user)

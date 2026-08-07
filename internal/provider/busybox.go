@@ -146,6 +146,17 @@ func (b *busybox) LockPassword(ctx context.Context, user string) error {
 	return nil
 }
 
+// LookupUser resolves one user name through NSS. See lookupViaGetent for why
+// this is keyed rather than read out of Scan's enumeration.
+func (b *busybox) LookupUser(ctx context.Context, name string) (uint32, bool, error) {
+	return lookupViaGetent(ctx, b.r, "passwd", name)
+}
+
+// LookupGroup resolves one group name through NSS.
+func (b *busybox) LookupGroup(ctx context.Context, name string) (uint32, bool, error) {
+	return lookupViaGetent(ctx, b.r, "group", name)
+}
+
 // RemoveAccount deletes the user and its UPG, keeping the home directory.
 // busybox's `deluser` leaves the home alone unless --remove-home is passed, so
 // the files stay on disk owned by the numeric uid. It is idempotent — an absent

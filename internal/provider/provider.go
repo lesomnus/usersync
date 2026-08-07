@@ -51,6 +51,16 @@ type Provider interface {
 	// LockPassword locks the unix password so SSH/console login is impossible.
 	LockPassword(ctx context.Context, user string) error
 
+	// LookupUser resolves ONE user name through NSS and returns its uid. It is a
+	// keyed lookup, not a filter over Scan: winbind and sssd do not enumerate
+	// domain accounts by default, so a directory-served user is absent from Scan
+	// yet resolves perfectly well by name. A name that does not resolve is not an
+	// error.
+	LookupUser(ctx context.Context, name string) (uid uint32, found bool, err error)
+
+	// LookupGroup is LookupUser for a group name.
+	LookupGroup(ctx context.Context, name string) (gid uint32, found bool, err error)
+
 	// RemoveAccount deletes the unix user and its UPG but leaves the home
 	// directory and everything in it on disk. It is idempotent: an absent user
 	// (or UPG) is a no-op.

@@ -88,11 +88,35 @@ func (f Finding) String() string {
 	}
 }
 
+// Resolved is what a KEYED NSS lookup answered for each declared name — one
+// `getent passwd <name>` per roster entry, not a scan of the enumeration.
+//
+// The distinction decides whether this command works at all after a handover.
+// `getent passwd` with no key asks every NSS module to list everything it has,
+// and winbind does not (`winbind enum users` defaults to no; sssd's `enumerate`
+// likewise) because enumerating a domain is expensive. Reading declared accounts
+// out of the enumeration would therefore report every directory-served user as
+// missing — an alarm on every user, every run, in exactly the state this command
+// exists for. A keyed lookup is always answered.
+//
+// A name absent from the map did not resolve.
+type Resolved struct {
+	Users  map[string]uint32
+	Groups map[string]uint32
+}
+
 // Report is the outcome of one audit.
 type Report struct {
 	UsersChecked  int       `json:"users_checked"`
 	GroupsChecked int       `json:"groups_checked"`
 	Findings      []Finding `json:"findings"`
+
+	// Enumerated is how many names the enumeration returned. The Undeclared and
+	// Collision checks can only see those, so on a domain-joined host they cover
+	// local accounts and not the directory. Reporting the number keeps that limit
+	// visible instead of letting "no findings" read as "nothing out there".
+	EnumeratedUsers  int `json:"enumerated_users"`
+	EnumeratedGroups int `json:"enumerated_groups"`
 }
 
 // OK reports whether the system agrees with the roster.
@@ -100,14 +124,20 @@ func (r Report) OK() bool { return len(r.Findings) == 0 }
 
 // Run compares the roster against the scanned state.
 //
-// Lookups go through st.AllUsers/AllGroups — every name the scan saw, NOT the
-// managed-range-filtered maps. That is the point: a declared user that has come
-// back on an out-of-band number is exactly the drift worth catching, and the
-// filtered maps would hide it as "missing".
-func Run(ro *roster.Roster, st *state.State, cls *idrange.Classifier) Report {
+// Declared entries are judged from res — one keyed lookup per name — because
+// that is the only question a directory service answers reliably (see Resolved).
+// The sweep for names the roster does NOT declare necessarily comes from the
+// enumeration in st, and reads st.AllUsers/AllGroups rather than the
+// managed-range-filtered maps, so an account sitting on an out-of-band number is
+// still visible rather than silently skipped.
+func Run(ro *roster.Roster, res Resolved, st *state.State, cls *idrange.Classifier) Report {
 	// Non-nil so a clean run marshals as `"findings": []` rather than `null` —
 	// this report is meant to be consumed by cron and dashboards.
-	rep := Report{Findings: []Finding{}}
+	rep := Report{
+		Findings:         []Finding{},
+		EnumeratedUsers:  len(st.AllUsers),
+		EnumeratedGroups: len(st.AllGroups),
+	}
 	add := func(f Finding) { rep.Findings = append(rep.Findings, f) }
 
 	declaredUsers := map[string]bool{}
@@ -115,7 +145,7 @@ func Run(ro *roster.Roster, st *state.State, cls *idrange.Classifier) Report {
 		declaredUsers[u.Name] = true
 		rep.UsersChecked++
 
-		got, resolved := st.AllUsers[u.Name]
+		got, resolved := res.Users[u.Name]
 		if u.Status == roster.Reserved {
 			// A tombstone declares that nobody holds this name or number.
 			if resolved {
@@ -136,7 +166,7 @@ func Run(ro *roster.Roster, st *state.State, cls *idrange.Classifier) Report {
 		declaredGroups[g.Name] = true
 		rep.GroupsChecked++
 
-		got, resolved := st.AllGroups[g.Name]
+		got, resolved := res.Groups[g.Name]
 		switch {
 		case !resolved:
 			add(Finding{Kind: "group", Name: g.Name, Code: Missing, Want: g.GID})
@@ -145,8 +175,13 @@ func Run(ro *roster.Roster, st *state.State, cls *idrange.Classifier) Report {
 		}
 	}
 
-	// Anything resolving inside the reserved band that the ledger does not know
+	// Anything ENUMERATING inside the reserved band that the ledger does not know
 	// about — someone allocated from the band without going through the roster.
+	//
+	// This half necessarily comes from the enumeration: you cannot ask "who else
+	// is out there" with a keyed lookup. On a domain-joined host that means it
+	// covers local accounts and not the directory, which is why Report carries
+	// the enumerated counts — so a clean result is not mistaken for proof.
 	//
 	// User private groups do not show up here, and deliberately are not
 	// special-cased away: a UPG's gid equals its uid, which Config.Validate keeps

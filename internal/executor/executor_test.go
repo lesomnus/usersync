@@ -39,6 +39,23 @@ func (f fakeProvider) LockPassword(_ context.Context, user string) error {
 	return nil
 }
 
+// Lookup{User,Group} answer from the same canned scan. The executor never calls
+// them — `audit` does — but the interface requires them.
+func (f fakeProvider) LookupUser(_ context.Context, name string) (uint32, bool, error) {
+	if f.scan == nil {
+		return 0, false, nil
+	}
+	u, ok := f.scan.Users[name]
+	return u.UID, ok, nil
+}
+func (f fakeProvider) LookupGroup(_ context.Context, name string) (uint32, bool, error) {
+	if f.scan == nil {
+		return 0, false, nil
+	}
+	g, ok := f.scan.Groups[name]
+	return g.GID, ok, nil
+}
+
 // RemoveAccount is never reached through the executor — `detach` calls the
 // provider directly, and no reconcile Action maps to it. It is here to satisfy
 // the interface, and it logs so that a future action that DID route through the

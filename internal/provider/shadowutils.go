@@ -177,6 +177,17 @@ func (s *shadowUtils) LockPassword(ctx context.Context, user string) error {
 	return nil
 }
 
+// LookupUser resolves one user name through NSS. See lookupViaGetent for why
+// this is keyed rather than read out of Scan's enumeration.
+func (s *shadowUtils) LookupUser(ctx context.Context, name string) (uint32, bool, error) {
+	return lookupViaGetent(ctx, s.r, "passwd", name)
+}
+
+// LookupGroup resolves one group name through NSS.
+func (s *shadowUtils) LookupGroup(ctx context.Context, name string) (uint32, bool, error) {
+	return lookupViaGetent(ctx, s.r, "group", name)
+}
+
 // RemoveAccount deletes the user and its UPG, keeping the home directory.
 // `userdel` is deliberately called WITHOUT -r: the files stay on disk, owned by
 // the numeric uid, waiting for the directory service to resolve that number

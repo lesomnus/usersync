@@ -38,8 +38,8 @@ paths:
   home: /research/home
   groups: /research/groups
 manage:
-  uid: { min: 3000, max: 6999 }   # 사용자(UPG gid=uid 동일 범위)
-  gid: { min: 7000, max: 7999 }   # 팀 그룹
+  uid: { min: 3000, max: 9999 }   # 사용자(UPG gid=uid 동일 범위)
+  gid: { min: 10000, max: 19999 }   # 팀 그룹
 protect:
   system_floor: 1000              # 이 값 미만은 불가침(코드가 최소 1000 보장)
 on_out_of_scope: error            # error | skip
@@ -51,7 +51,7 @@ provider: auto                    # auto | shadow-utils | busybox | pw
 ### 1.4 기존 상태 흡수 (부트스트랩)
 파일 서버엔 이미 수동 계정이 있다. 백지에서 시작하지 말고 현재 상태를 `roster.yaml`로 뽑아낸다:
 ```sh
-sudo ./usersync export > roster.yaml      # 관리 범위(3000+/7000+) 안의 실제 계정을 역출력
+sudo ./usersync export > roster.yaml      # 관리 범위(3000+/10000+) 안의 실제 계정을 역출력
 $EDITOR roster.yaml                        # 검토·정리
 git add roster.yaml usersync.yaml && git commit -m "adopt usersync"
 sudo ./usersync plan                       # action 0건이어야 정상(= 흡수 정합성 확인)
@@ -64,7 +64,7 @@ sudo ./usersync plan                       # action 0건이어야 정상(= 흡�
 
 ```yaml
 groups:
-  - { name: team-a, gid: 7001, description: Perception team }
+  - { name: team-a, gid: 10001, description: Perception team }
 users:
   - name: skim
     uid: 3001
@@ -91,7 +91,7 @@ users:
 ```yaml
 # roster.yaml users: 에 추가
   - name: skim
-    uid: 3001                      # 3000–6999 중 비어있는 값
+    uid: 3001                      # 3000–9999 중 비어있는 값
     full_name: Sunghyun Kim
     groups: [team-a]
 ```
@@ -105,7 +105,7 @@ sudo ./usersync apply              # 생성: UPG→useradd→홈(0700)→보조�
 ### 3.2 팀 신설 / 팀 배정 변경
 ```yaml
 groups:
-  - { name: team-b, gid: 7002, description: Planning team }
+  - { name: team-b, gid: 10002, description: Planning team }
 users:
   - name: jlee
     uid: 3002

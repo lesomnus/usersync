@@ -6,9 +6,13 @@ paths:
   groups: /research/groups          # group folder root
 
 # The id window usersync manages. roster uids/gids must fall inside these.
+# The whole 3000-19999 band is reserved for this tool: a future on-prem AD must
+# be able to carry these exact numbers as RFC2307 uidNumber/gidNumber, and
+# renumbering later is not practical once snapshots hold files by numeric owner.
+# See identity-roadmap.md before narrowing or moving these windows.
 manage:
-  uid: { min: 3000, max: 6999 }     # users (and their UPG, gid == uid)
-  gid: { min: 7000, max: 7999 }     # team groups
+  uid: { min: 3000, max: 9999 }     # users (and their UPG, gid == uid)
+  gid: { min: 10000, max: 19999 }   # team groups
 
 # Reserved id ranges usersync never touches. system_floor (default 1000) is
 # clamped up to a hard 1000 floor and can only be raised, never lowered.

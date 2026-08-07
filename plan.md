@@ -130,16 +130,16 @@ usersync export | diff - roster.yaml   # 실제↔선언 델타를 직접 확인
 
 ### `roster.yaml` — 선언 상태
 ```yaml
-# 공유(팀) 그룹. name 은 유일, gid 는 팀 그룹 범위(기본 7000–7999).
+# 공유(팀) 그룹. name 은 유일, gid 는 팀 그룹 범위(기본 10000–19999).
 groups:
   - name: team-a
-    gid: 7001
+    gid: 10001
     description: Perception team
   - name: team-b
-    gid: 7002
+    gid: 10002
     description: Planning team
 
-# 사용자. name 은 유일, uid 는 사용자 범위(기본 3000–6999).
+# 사용자. name 은 유일, uid 는 사용자 범위(기본 3000–9999).
 users:
   - name: skim
     uid: 3001
@@ -180,8 +180,8 @@ paths:
 
 # usersync 가 '관리'하는 id 창(window). roster 의 uid/gid 는 반드시 이 안이어야 한다.
 manage:
-  uid: { min: 3000, max: 6999 }   # 사용자(및 UPG gid=uid)
-  gid: { min: 7000, max: 7999 }   # 팀 그룹
+  uid: { min: 3000, max: 9999 }   # 사용자(및 UPG gid=uid)
+  gid: { min: 10000, max: 19999 }   # 팀 그룹
 
 # usersync 가 '절대 건드리지 않는' 보호(예약) 범위. manage/roster 보다 우선.
 # 하드코딩된 "<1000 불가침"을 일반화한 것 — 얼마든 범위를 추가할 수 있다.
@@ -190,7 +190,7 @@ protect:
   uid:                            # 추가 보호 대역(선택). 다른 툴/서비스가 쓰는 예약 대역 등.
     - { min: 5000, max: 5099 }
   gid:
-    - { min: 8000, max: 8199 }
+    - { min: 12000, max: 12199 }
 
 # manage·protect 어디에도 안 드는 roster 엔트리 처리:
 #   error = 하드 거부(기본), skip = 경고 후 그 엔트리만 제외하고 진행(--skip-out-of-scope).
@@ -212,7 +212,7 @@ usersync 가 id 를 다루는 규칙은 세 층위로 정리된다.
 | **범위 밖**       | manage 도 protect 도 아닌 나머지          | roster 가 선언하면 **기본은 거부**. `on_out_of_scope: skip`(또는 `--skip-out-of-scope`)이면 **경고 후 그 엔트리만 제외하고 진행**. 실재 계정은 관심 밖(무시). |
 
 - **절대 안전선**: `system_floor` 의 기본·최소값은 **1000**. 설정으로 더 **높일 수는 있어도**(더 안전) **1000 밑으로 낮출 수 없다** — 코드가 `max(1000, system_floor)` 로 클램프(설정으로도 못 뚫음). 기존 "<1000 무조건 거부"를 **일반화하되 안전 보장은 유지**.
-- **보호 > 관리**: 두 범위가 겹치면 보호가 이긴다. 예) `manage.uid 3000–6999` 안에 `protect.uid 5000–5099` 를 두면 그 구멍은 관리에서 제외된다.
+- **보호 > 관리**: 두 범위가 겹치면 보호가 이긴다. 예) `manage.uid 3000–9999` 안에 `protect.uid 5000–5099` 를 두면 그 구멍은 관리에서 제외된다.
 - UPG 는 `gid = uid` 이므로 사용자 uid 범위가 곧 UPG gid 범위(팀 gid 범위와 분리 유지).
 
 #### 범위 밖 엔트리 처리 — 하드 거부 vs 경고 후 스킵
@@ -385,10 +385,10 @@ usersync purge <user>   # 명시적 완전 삭제(위험): 홈 tar 아카이브 
 ```
 PLAN (dry-run)
   + create user  skim (uid 3001, groups: team-a)
-  + create group team-b (gid 7002)
+  + create group team-b (gid 10002)
   ~ update user  jlee (groups: team-a → team-a,team-b)
   - disable user oldie (absent in file; home kept)
-  ! refuse group team-a (gid 7001 desired, 5000 actual — manual)
+  ! refuse group team-a (gid 10001 desired, 5000 actual — manual)
   · skip   user  legacy (uid 2000 out of manage scope; --skip-out-of-scope)
 Summary: create=1 update=1 disable=1 refuse=1 group-create=1 skip=1
 ```
@@ -523,7 +523,7 @@ type Samba interface {
 - 라이선스: **Apache-2.0**(메인테이너 지정).
 
 **0단계 — 스캐폴딩 정리**
-- `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–6999, gid 7000–7999, system_floor 1000, on_out_of_scope=error, provider auto).
+- `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–9999, gid 10000–19999, system_floor 1000, on_out_of_scope=error, provider auto).
 - `idrange` 패키지: id → `Protected|Managed|OutOfScope` 분류. **`system_floor`는 `max(1000, cfg)`로 클램프**(1000 밑 불가). "보호 > 관리 > 범위 밖" 판정 함수 + 표 케이스 단위테스트.
 - `roster.yaml` 로더(`cmd/config/roster.go`): strict decode + 검증. **분류별 처리**: `Protected` 선언 → 항상 하드 에러; `OutOfScope` 선언 → `on_out_of_scope`에 따라 하드 에러 또는 경고 후 그 엔트리 드롭(스킵 목록 보존); 그 외 미정의 팀 참조 검증. **유일성**: `name`·`uid` 중복을 **active/disabled/reserved 전체에 걸쳐** 거부(= 예약 강제).
 

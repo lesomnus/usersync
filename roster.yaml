@@ -1,16 +1,16 @@
 # roster.yaml — desired users/groups. Version-controlled; edit then `usersync apply`.
 # Operational settings (ranges, paths, seed, provider) live in usersync.yaml.
 
-# Shared (team) groups. `name` unique; `gid` within the team-group range (default 7000–7999).
+# Shared (team) groups. `name` unique; `gid` within the team-group range (default 10000–19999).
 groups:
   - name: team-a
-    gid: 7001
+    gid: 10001
     description: Perception team
   - name: team-b
-    gid: 7002
+    gid: 10002
     description: Planning team
 
-# Users. `name` unique; `uid` within the user range (default 3000–6999).
+# Users. `name` unique; `uid` within the user range (default 3000–9999).
 # The tool creates a matching UPG (User Private Group) with gid = uid.
 users:
   - name: skim

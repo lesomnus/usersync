@@ -95,8 +95,8 @@ func del() {
 func classifier() *idrange.Classifier {
 	return idrange.New(idrange.Config{
 		SystemFloor: 1000,
-		UID:         idrange.Set{Manage: idrange.Range{Min: 3000, Max: 6999}},
-		GID:         idrange.Set{Manage: idrange.Range{Min: 7000, Max: 7999}},
+		UID:         idrange.Set{Manage: idrange.Range{Min: 3000, Max: 9999}},
+		GID:         idrange.Set{Manage: idrange.Range{Min: 10000, Max: 19999}},
 	})
 }
 
@@ -166,7 +166,7 @@ func (s stack) apply(t *testing.T, ro *roster.Roster) {
 
 func fullRoster() *roster.Roster {
 	return &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 7001}},
+		Groups: []roster.Group{{Name: "team-a", GID: 10001}},
 		Users: []roster.User{
 			{Name: "skim", UID: 3001, FullName: "Sunghyun Kim", Groups: []string{"team-a"}},
 			{Name: "park", UID: 3004, Status: roster.Disabled},
@@ -232,8 +232,8 @@ func TestApplyEndToEnd(t *testing.T) {
 	if st.Smb["park"].Enabled {
 		t.Error("park was created disabled; its SMB account must be disabled")
 	}
-	if perm, _, gid := statOwnerMode(t, filepath.Join(s.groupsBase, "team-a")); perm != 0o2770 || gid != 7001 {
-		t.Errorf("team-a folder = %o gid %d, want 2770 gid 7001 (setgid)", perm, gid)
+	if perm, _, gid := statOwnerMode(t, filepath.Join(s.groupsBase, "team-a")); perm != 0o2770 || gid != 10001 {
+		t.Errorf("team-a folder = %o gid %d, want 2770 gid 10001 (setgid)", perm, gid)
 	}
 
 	// === idempotency: re-plan yields no Change actions ===
@@ -242,7 +242,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	}
 
 	// === offboard: drop skim from the roster => SMB disabled, data kept ===
-	s.apply(t, &roster.Roster{Groups: []roster.Group{{Name: "team-a", GID: 7001}}})
+	s.apply(t, &roster.Roster{Groups: []roster.Group{{Name: "team-a", GID: 10001}}})
 	if _, err := os.Stat(filepath.Join(s.homeBase, "skim")); err != nil {
 		t.Error("skim home must be preserved after offboarding")
 	}
@@ -380,8 +380,8 @@ func TestModeDriftHeal(t *testing.T) {
 	if perm, uid, gid := statOwnerMode(t, home); perm != 0o700 || uid != 3001 || gid != 3001 {
 		t.Errorf("home not healed: %o %d:%d, want 700 3001:3001", perm, uid, gid)
 	}
-	if perm, _, gid := statOwnerMode(t, folder); perm != 0o2770 || gid != 7001 {
-		t.Errorf("group folder not healed: %o gid %d, want 2770 gid 7001", perm, gid)
+	if perm, _, gid := statOwnerMode(t, folder); perm != 0o2770 || gid != 10001 {
+		t.Errorf("group folder not healed: %o gid %d, want 2770 gid 10001", perm, gid)
 	}
 }
 
@@ -452,7 +452,7 @@ func TestPreservesProtectedGroupOnUpdate(t *testing.T) {
 
 	// Roster change (skim gains team-b) fires a supplementary-group update.
 	s.apply(t, &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 7001}, {Name: "team-b", GID: 7002}},
+		Groups: []roster.Group{{Name: "team-a", GID: 10001}, {Name: "team-b", GID: 10002}},
 		Users: []roster.User{
 			{Name: "skim", UID: 3001, Groups: []string{"team-a", "team-b"}},
 			{Name: "park", UID: 3004, Status: roster.Disabled},

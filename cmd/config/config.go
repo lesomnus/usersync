@@ -80,10 +80,16 @@ func (c *Config) Path() string { return c.path }
 func (c *Config) Evaluate() error {
 	z.FallbackP(&c.Paths.Home, "/research/home")
 	z.FallbackP(&c.Paths.Groups, "/research/groups")
+	// The 3000-19999 band is reserved for usersync as a whole (see
+	// identity-roadmap.md): a future on-prem AD must be able to carry these exact
+	// uid/gid numbers in its RFC2307 attributes, and renumbering later is
+	// effectively impossible once ZFS snapshots hold files by numeric owner. The
+	// window is deliberately wider than today's headcount because widening it
+	// after the band has been negotiated with IT is the expensive direction.
 	z.FallbackP(&c.Manage.UID.Min, uint32(3000))
-	z.FallbackP(&c.Manage.UID.Max, uint32(6999))
-	z.FallbackP(&c.Manage.GID.Min, uint32(7000))
-	z.FallbackP(&c.Manage.GID.Max, uint32(7999))
+	z.FallbackP(&c.Manage.UID.Max, uint32(9999))
+	z.FallbackP(&c.Manage.GID.Min, uint32(10000))
+	z.FallbackP(&c.Manage.GID.Max, uint32(19999))
 	z.FallbackP(&c.Protect.SystemFloor, uint32(1000))
 	z.FallbackP(&c.OnOutOfScope, "error")
 	z.FallbackP(&c.SeedFile, "./seed.secret")

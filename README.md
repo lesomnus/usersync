@@ -16,12 +16,17 @@ See [`plan.md`](./plan.md) for the full design.
 ```yaml
 # roster.yaml — desired state
 groups:
-  - { name: team-a, gid: 7001, description: Perception team }
+  - { name: team-a, gid: 10001, description: Perception team }
 users:
   - { name: skim, uid: 3001, full_name: Sunghyun Kim, groups: [team-a] }
   - { name: park, uid: 3004, status: disabled }   # SMB off, home + uid kept
   - { name: oldhand, uid: 3005, status: reserved } # no account; uid burned so it is never reused
 ```
+
+Ids live in a reserved band: **uid 3000–9999** (users, each with a UPG whose gid
+equals its uid) and **gid 10000–19999** (team groups). The band is what a future
+on-prem AD has to carry verbatim as RFC2307 `uidNumber`/`gidNumber` — see
+[`identity-roadmap.md`](./identity-roadmap.md).
 
 `usersync.yaml` holds operational settings (paths, the managed id window, the
 protected id ranges, seed, backend). The schema mirrors

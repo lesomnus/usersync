@@ -15,6 +15,31 @@ func TestValidateAcceptsDefaults(t *testing.T) {
 	}
 }
 
+// The default windows are the id band reserved for usersync with IT. They must
+// not drift silently: a future on-prem AD carries these exact numbers as RFC2307
+// attributes, and renumbering is impractical once snapshots own files by number.
+func TestDefaultIDBand(t *testing.T) {
+	c := goodConfig()
+	for _, tt := range []struct {
+		what     string
+		min, max uint32
+		wantMin  uint32
+		wantMax  uint32
+	}{
+		{"manage.uid", c.Manage.UID.Min, c.Manage.UID.Max, 3000, 9999},
+		{"manage.gid", c.Manage.GID.Min, c.Manage.GID.Max, 10000, 19999},
+	} {
+		if tt.min != tt.wantMin || tt.max != tt.wantMax {
+			t.Errorf("%s = %d-%d, want %d-%d", tt.what, tt.min, tt.max, tt.wantMin, tt.wantMax)
+		}
+	}
+	// UPG gid == uid, so a user's uid also burns that number in gid space. The
+	// two windows must stay disjoint or Validate rejects the config outright.
+	if c.Manage.UID.Max >= c.Manage.GID.Min {
+		t.Errorf("uid window (max %d) must end below the gid window (min %d)", c.Manage.UID.Max, c.Manage.GID.Min)
+	}
+}
+
 func TestValidateRejects(t *testing.T) {
 	cases := map[string]func(*Config){
 		"inverted manage.uid":    func(c *Config) { c.Manage.UID.Min, c.Manage.UID.Max = 6999, 3000 },

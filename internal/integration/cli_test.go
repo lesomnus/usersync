@@ -67,7 +67,7 @@ type result struct {
 	code           int
 }
 
-func run(t *testing.T, bin, dir string, args ...string) result {
+func runCLI(t *testing.T, bin, dir string, args ...string) result {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
@@ -97,7 +97,7 @@ func asExitError(err error, dst **exec.ExitError) bool {
 func TestCLIValidateAcceptsAGoodRoster(t *testing.T) {
 	bin, dir := binary(t), fixture(t)
 
-	r := run(t, bin, dir, "validate")
+	r := runCLI(t, bin, dir, "validate")
 	if r.code != 0 {
 		t.Fatalf("validate exited %d\nstdout: %s\nstderr: %s", r.code, r.stdout, r.stderr)
 	}
@@ -114,7 +114,7 @@ func TestCLIRejectsTypoedConfigKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := run(t, bin, dir, "validate")
+	r := runCLI(t, bin, dir, "validate")
 	if r.code == 0 {
 		t.Fatalf("validate exited 0 on a typo'd key; the safety default applied silently\nstdout: %s", r.stdout)
 	}
@@ -129,7 +129,7 @@ func TestCLIValidateRejectsOutOfRangeUID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := run(t, bin, dir, "validate")
+	r := runCLI(t, bin, dir, "validate")
 	if r.code == 0 {
 		t.Fatal("validate accepted uid 0, which is below the protected floor")
 	}
@@ -144,7 +144,7 @@ func TestCLIValidateRejectsOutOfRangeUID(t *testing.T) {
 func TestCLISharesRendersDescriptionAsComment(t *testing.T) {
 	bin, dir := binary(t), fixture(t)
 
-	r := run(t, bin, dir, "shares")
+	r := runCLI(t, bin, dir, "shares")
 	if r.code != 0 {
 		t.Fatalf("shares exited %d\nstderr: %s", r.code, r.stderr)
 	}
@@ -164,10 +164,10 @@ func TestCLIConfigFlagIsRootOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if r := run(t, bin, dir, "--config", "alt.yaml", "validate"); r.code != 0 {
+	if r := runCLI(t, bin, dir, "--config", "alt.yaml", "validate"); r.code != 0 {
 		t.Errorf("`--config alt.yaml validate` exited %d, want 0\nstderr: %s", r.code, r.stderr)
 	}
-	r := run(t, bin, dir, "validate", "--config", "alt.yaml")
+	r := runCLI(t, bin, dir, "validate", "--config", "alt.yaml")
 	if r.code == 0 {
 		t.Error("`validate --config alt.yaml` exited 0; if this now works, fix README instead of this test")
 	}
@@ -187,7 +187,7 @@ func TestCLIRejectsFlagsTheCommandDoesNotRead(t *testing.T) {
 		if tt.flag == "--seed-file" {
 			args = append(args, "seed")
 		}
-		r := run(t, bin, dir, args...)
+		r := runCLI(t, bin, dir, args...)
 		if r.code == 0 {
 			t.Errorf("`%s %s` exited 0; the flag is being silently ignored", tt.name, tt.flag)
 		}
@@ -201,7 +201,7 @@ func TestCLIApplyRefusesWithoutRoot(t *testing.T) {
 	}
 	bin, dir := binary(t), fixture(t)
 
-	r := run(t, bin, dir, "apply")
+	r := runCLI(t, bin, dir, "apply")
 	if r.code == 0 {
 		t.Fatal("apply exited 0 as a non-root user")
 	}
@@ -218,7 +218,7 @@ func TestCLIApplyRefusesInAuditMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := run(t, bin, dir, "apply")
+	r := runCLI(t, bin, dir, "apply")
 	if r.code == 0 {
 		t.Fatal("apply exited 0 under mode: audit")
 	}
@@ -231,7 +231,7 @@ func TestCLIApplyRefusesInAuditMode(t *testing.T) {
 func TestCLIVersionPrintsSomething(t *testing.T) {
 	bin, dir := binary(t), fixture(t)
 
-	r := run(t, bin, dir, "version")
+	r := runCLI(t, bin, dir, "version")
 	if r.code != 0 {
 		t.Fatalf("version exited %d\nstderr: %s", r.code, r.stderr)
 	}

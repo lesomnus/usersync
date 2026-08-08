@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lesomnus/usersync/cmd"
+	"github.com/lesomnus/usersync/internal/cmd"
 )
 
 func main() {

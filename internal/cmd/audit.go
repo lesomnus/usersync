@@ -8,6 +8,7 @@ import (
 	"github.com/lesomnus/usersync/internal/audit"
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/xli"
+	"github.com/lesomnus/xli/flg"
 )
 
 func NewCmdAudit() *xli.Command {
@@ -17,7 +18,8 @@ func NewCmdAudit() *xli.Command {
 		Synop: "Compares every roster entry against what the system actually resolves — including names served by a directory through NSS — and reports any disagreement. Changes nothing, needs no root, and exits non-zero when it finds something. " +
 			"This is what `mode: audit` leaves usersync doing once a directory service owns the accounts: the roster is still the ledger of which number belongs to whom, and nothing else checks that the directory agrees with it.",
 
-		Flags: commonFlags(),
+		// audit reports, it never provisions, so no --seed-file.
+		Flags: append(rosterFlags(), &flg.Switch{Name: "json", Brief: "machine-readable JSON report"}),
 
 		Handler: xli.OnRun(func(ctx context.Context, cmd *xli.Command, next xli.Next) error {
 			c := use_config.Must(ctx)

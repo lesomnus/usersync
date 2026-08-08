@@ -9,7 +9,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/lesomnus/otx/log"
-	"github.com/lesomnus/usersync/cmd/config"
+	"github.com/lesomnus/usersync/internal/cmd/config"
 	"github.com/lesomnus/xli"
 	"github.com/lesomnus/xli/flg"
 	"github.com/lesomnus/z"

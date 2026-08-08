@@ -5,7 +5,7 @@
 # Runs the tagged Go integration test (internal/integration) as root against
 # REAL shadow-utils and Samba inside THROWAWAY containers — nothing is created on
 # the host or in the devcontainer. CI runs the very same
-# `go test -tags integration` (see .github/workflows/integration.yaml).
+# `go test -tags integration` (see the integration jobs in .github/workflows/ci.yaml).
 #
 #   bash scripts/verify-integration.sh
 #
@@ -28,7 +28,7 @@ docker info >/dev/null 2>&1 || {
 }
 
 # Run the whole suite against each account backend in its own container:
-#   - shadow-utils on Debian, the backend 파일 서버 actually uses
+#   - shadow-utils on Debian, the backend a Debian/Ubuntu server actually uses
 #   - busybox on Alpine, which really does use adduser/addgroup and has no
 #     usermod, so the diff-based supplementary-group path gets exercised
 # (pw/FreeBSD cannot run under Linux Docker, so it stays golden-command tested.)

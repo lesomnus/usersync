@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 
-	"github.com/lesomnus/usersync/cmd/version"
+	"github.com/lesomnus/usersync/internal/cmd/version"
 	"github.com/lesomnus/xli"
 )
 

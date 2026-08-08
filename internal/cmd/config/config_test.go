@@ -1,10 +1,14 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func goodConfig() *Config {
 	c := &Config{}
-	// mirror 파일 서버 defaults
+	// mirror the shipped usersync.yaml defaults
 	_ = c.Evaluate()
 	return c
 }
@@ -63,5 +67,45 @@ func TestValidateRejects(t *testing.T) {
 		if err := c.Validate(); err == nil {
 			t.Errorf("%s: expected Validate to reject, got nil", name)
 		}
+	}
+}
+
+// A typo'd KEY must fail the load, not fall back to the default.
+//
+// Every safety control here is default-on-absence, so a silently-dropped key is
+// indistinguishable from "the operator wanted the safe default" — except that
+// the operator asked for the opposite. `moode: audit` loading as `mode: manage`
+// lets apply run during a handover, which is the one thing audit mode exists to
+// prevent.
+func TestReadFromFileRejectsUnknownKey(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{"typo'd top-level key", "moode: audit\n", true},
+		{"typo'd nested block", "protcet:\n  system_floor: 5000\n", true},
+		{"typo'd key inside a good block", "protect:\n  system_flor: 5000\n", true},
+		{"the correct spelling still loads", "mode: audit\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "usersync.yaml")
+			if err := os.WriteFile(p, []byte(tt.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := ReadFromFile(p)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ReadFromFile(%q) = nil error; a dropped key silently voids the safety default", tt.yaml)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReadFromFile(%q): %v", tt.yaml, err)
+			}
+			if c.Mode != "audit" {
+				t.Errorf("Mode = %q, want audit", c.Mode)
+			}
+		})
 	}
 }

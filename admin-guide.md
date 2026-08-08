@@ -20,7 +20,24 @@
 ## 1. 최초 셋업 (한 번만)
 
 ### 1.1 바이너리 배치
-정적 단일 바이너리다. 빌드(`CGO_ENABLED=0 go build -o usersync .`) 후 파일 서버에 복사하거나, 컨테이너 이미지(`ghcr.io/lesomnus/usersync`)를 쓴다.
+정적 단일 바이너리다. 셋 중 하나로 배치한다.
+
+```sh
+go install github.com/lesomnus/usersync@v0.1.0      # 1) Go 툴체인이 있으면
+CGO_ENABLED=0 go build -o usersync .                # 2) 소스에서 직접
+```
+
+3) 컨테이너 이미지에서 **꺼내** 쓴다. `ghcr.io/lesomnus/usersync`는 실행 환경이 아니라
+   **바이너리 운반체다** — `FROM scratch`라 `getent`/`useradd`/`smbpasswd`/`testparm`이 없고,
+   이들 없이는 `apply`·`plan`·`export`·`audit`이 전부 실패한다. 이미지를 직접 돌리지 말고 이렇게 쓴다:
+
+```dockerfile
+COPY --from=ghcr.io/lesomnus/usersync:v0.1.0 /usersync /usr/local/bin/usersync
+```
+
+usersync를 실제로 돌리는 곳(호스트든 컨테이너든)에는 **shadow-utils(또는 busybox/pw)와
+samba-common-bin이 이미 있어야 하고 root여야 한다.** 계정을 만드는 것은 usersync가 아니라
+그 도구들이고, usersync는 선언에 맞게 그것들을 호출할 뿐이다.
 
 ### 1.2 시드 생성 (초기 비번 파생용)
 초기 SMB 비번은 시드에서 **결정적으로 파생**된다. 시드는 roster에 넣지 않고 별도 파일/환경변수로 준다.
@@ -32,7 +49,7 @@ openssl rand -base64 32 > seed.secret   # mode 0600
 - 또는 `USERSYNC_SEED` 환경변수로 주입 가능.
 
 ### 1.3 운영 설정 `usersync.yaml`
-경로·관리 범위·보호 범위·provider를 정의한다. 기본값이 파일 서버 레이아웃과 맞다:
+경로·관리 범위·보호 범위·provider를 정의한다. 기본값은 아래 배치를 가정한다:
 ```yaml
 paths:
   home: /research/home
@@ -101,7 +118,7 @@ sudo ./usersync plan --commands    # 나갈 명령(useradd/usermod/smbpasswd …
 sudo ./usersync apply              # 생성: UPG→useradd→홈(0700)→보조그룹→비번잠금→SMB등록·활성
 ./usersync passwd --seed-file seed.secret skim   # 초기 SMB 비번을 확인해 사용자에게 전달
 ```
-- 사용자는 SMB로 `\\파일 서버\skim`(자기 홈) 접속. 서버 로그인은 불가.
+- 사용자는 SMB로 `\\<서버>\skim`(자기 홈) 접속. 서버 로그인은 불가.
 
 ### 3.2 팀 신설 / 팀 배정 변경
 ```yaml
@@ -145,7 +162,7 @@ sudo smbpasswd -a skim             # 대화형으로 새 비번 입력
 ### 3.5 완전 삭제 (위험)
 정말 계정·홈까지 없앨 때만. 홈은 먼저 아카이브된다.
 ```sh
-sudo ./usersync purge --yes skim   # 홈 tar 백업 → smbpasswd -x → userdel -r → groupdel(UPG)
+sudo ./usersync purge --yes skim   # 홈 tar 백업 → smbpasswd -x → 계정+UPG 해제 → 홈 삭제
 ```
 - purge는 uid 재사용 방지용 `status: reserved` **스니펫을 출력**한다 → roster에 붙여넣고 커밋(주석 보존). `--reserve`를 주면 roster 파일에 직접 기록하지만 주석/서식이 사라진다.
 - 홈 아카이브가 실패하면 **삭제를 중단**한다(데이터 손실 방지). GECOS에 콜론이 있어도 홈 경로를 정확히 파싱한다.

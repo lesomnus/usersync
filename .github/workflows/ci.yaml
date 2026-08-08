@@ -9,6 +9,9 @@ on:
       - .github/workflows/ci.yaml
       - cmd/**
       - internal/**
+      # The builder stage runs ./scripts/gen-version-file.sh, so a change here
+      # can break the image build. Without this line such a PR runs zero jobs.
+      - scripts/**
       - docker-bake.hcl
       - Dockerfile
       - go.mod

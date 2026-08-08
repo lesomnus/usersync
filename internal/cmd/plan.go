@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lesomnus/usersync/cmd/config"
+	"github.com/lesomnus/usersync/internal/cmd/config"
 	"github.com/lesomnus/usersync/internal/reconcile"
 	"github.com/lesomnus/usersync/internal/report"
 	"github.com/lesomnus/usersync/internal/run"

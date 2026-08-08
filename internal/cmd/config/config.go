@@ -79,7 +79,14 @@ func ReadFromFile(p string) (*Config, error) {
 	defer f.Close()
 
 	var c Config
-	if err := yaml.NewDecoder(f).Decode(&c); err != nil {
+	// Strict, matching roster.Load. Every safety control in this file is a
+	// default-on-absence: `mode` falls back to manage, `system_floor` to 1000. A
+	// non-strict decode turns a typo'd KEY into that safe-looking default instead
+	// of an error — `moode: audit` loads as `mode: manage`, and `apply` sails
+	// straight past the gate whose whole job is to stop it from recreating
+	// accounts a directory already owns. Validate() catches a bad enum VALUE;
+	// only strict decoding catches the key.
+	if err := yaml.NewDecoder(f, yaml.Strict()).Decode(&c); err != nil {
 		return nil, z.Err(err, "decode")
 	}
 

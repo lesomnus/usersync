@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/lesomnus/usersync/cmd/config"
+	"github.com/lesomnus/usersync/internal/cmd/config"
 	"github.com/lesomnus/usersync/internal/executor"
 	"github.com/lesomnus/usersync/internal/fsops"
 	"github.com/lesomnus/usersync/internal/idrange"
@@ -24,17 +24,30 @@ import (
 	"github.com/lesomnus/z"
 )
 
-// commonFlags are shared by plan/apply/export. Fresh instances per command so
-// their parsed state is not aliased.
-func commonFlags() flg.Flags {
+// rosterFlags select and scope the declaration. Every roster-reading command
+// takes all of them. Fresh instances per command so their parsed state is not
+// aliased.
+func rosterFlags() flg.Flags {
 	return flg.Flags{
 		&flg.String{Name: "roster", Brief: "path to roster.yaml", Value: z.Ptr("roster.yaml")},
-		&flg.Switch{Name: "json", Brief: "machine-readable JSON report"},
 		&flg.Switch{Name: "skip-out-of-scope", Brief: "skip out-of-scope roster entries with a warning instead of failing"},
-		&flg.String{Name: "seed-file", Brief: "seed file for initial passwords (or env USERSYNC_SEED)"},
 		&flg.String{Name: "home-base", Brief: "home directory root (overrides config paths.home)"},
 		&flg.String{Name: "groups-base", Brief: "group folder root (overrides config paths.groups)"},
 	}
+}
+
+// commonFlags is rosterFlags plus the two that only some commands read.
+//
+// They are split because a flag that parses and is then ignored is worse than
+// one that does not exist: `export --json` used to accept the flag, print YAML,
+// and exit 0 — nothing told the caller their pipeline was reading the wrong
+// thing. Only commands that actually consume --json / --seed-file declare them,
+// so the rest reject them at parse time.
+func commonFlags() flg.Flags {
+	return append(rosterFlags(),
+		&flg.Switch{Name: "json", Brief: "machine-readable JSON report"},
+		&flg.String{Name: "seed-file", Brief: "seed file for initial passwords (or env USERSYNC_SEED)"},
+	)
 }
 
 // applyCommonFlags overlays flag values onto the loaded config (flags win when

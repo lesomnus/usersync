@@ -279,7 +279,7 @@ Step 3(한 명씩 `detach`)과 Step 4(`mode: audit` 전환)가 재시작 한 번
 
 3. **winbind가 새 단일 장애점이 된다.** DC 불통 시 `getpwnam`이 실패하고, 파일 접근 전체가 멈춘다. `winbind offline logon`과 캐시 동작을 가용성 항목에 넣을 것.
 
-4. **`usersync purge`는 여전히 shadow-utils 전용이다.** `userdel`을 직접 호출하므로 busybox/pw에서는 동작하지 않는다(`detach`는 `Provider.RemoveAccount`를 거치므로 세 백엔드 모두 지원). 파일 서버는 shadow-utils라 당장 문제는 없으나, 정리 대상으로 기록해 둔다.
+4. **`usersync purge`도 이제 `Provider.RemoveAccount`를 거친다.** 예전엔 `userdel`을 직접 불러서 busybox/pw에서는 SMB 계정만 지운 뒤 실패했다(계정과 홈은 남고 SMB만 끊긴 반쪽 상태). 지금은 세 백엔드 모두에서 동작하고, 홈 삭제는 아카이브 성공 뒤에 purge가 직접 한다.
 
 ---
 

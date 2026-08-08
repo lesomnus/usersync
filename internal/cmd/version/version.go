@@ -27,8 +27,16 @@ var build_info = BuildInfo{
 
 // Get returns the build metadata. When the values are still the compiled-in
 // placeholders (i.e. `go generate` did not stamp version.g.go), it falls back
-// to the VCS information Go records in the binary via runtime/debug — a normal
-// `go build` stamps vcs.revision/modified/time unless -buildvcs=false.
+// to what Go records in the binary via runtime/debug.
+//
+// Two disjoint fallbacks, because `go install <module>@<version>` and a local
+// `go build` record different things. A local build stamps
+// vcs.revision/modified/time (unless -buildvcs=false) but leaves Main.Version
+// at "(devel)". A module-mode install records no vcs.* settings at all — the
+// source came from the module proxy, not a checkout — but Main.Version is
+// exactly the requested version. Consulting only the VCS settings is why
+// `go install …@v0.1.0` used to print "YYMMDD-local" and an all-zero rev: a
+// released binary that could not say which release it was.
 func Get() BuildInfo {
 	b := build_info
 	if b.Version != placeholderVersion || b.GitRev != placeholderRev {
@@ -39,6 +47,9 @@ func Get() BuildInfo {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return b
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		b.Version = v
 	}
 	for _, s := range info.Settings {
 		switch s.Key {

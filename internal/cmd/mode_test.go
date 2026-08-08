@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lesomnus/usersync/cmd/config"
+	"github.com/lesomnus/usersync/internal/cmd/config"
 )
 
 // The mode gate decides whether usersync still owns the accounts. Getting it

@@ -11,6 +11,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/lesomnus/usersync/internal/idrange"
+	"github.com/lesomnus/usersync/internal/provider"
 	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/usersync/internal/samba"
@@ -79,6 +80,17 @@ func NewCmdPurge() *xli.Command {
 
 			runner := run.Exec{}
 
+			// Resolve the account backend BEFORE anything is destroyed. purge used to
+			// call `userdel -r`/`groupdel` directly, which meant that on busybox
+			// (deluser/delgroup) or pw the run got as far as deleting the SMB account
+			// and then failed — leaving a user who still has a home and a unix account
+			// but can no longer reach either over SMB, plus a stray archive. Detecting
+			// here turns an unsupported backend into a refusal that costs nothing.
+			p, err := provider.Detect(c.Provider, runner)
+			if err != nil {
+				return err
+			}
+
 			// 1. archive home. If the home exists but archiving FAILS, abort before
 			// deleting anything — deleting after a failed archive would lose data.
 			archive, err := archiveHome(ctx, runner, user, home)
@@ -94,12 +106,21 @@ func NewCmdPurge() *xli.Command {
 				fmt.Fprintf(errW(cmd), "warning: smbpasswd -x failed (no SMB account?): %v\n", err)
 			}
 
-			// 3. delete unix user (removes home) and 4. its UPG.
-			if _, err := runner.Run(ctx, "", "userdel", "-r", user); err != nil {
-				return fmt.Errorf("userdel %s: %w", user, err)
+			// 3. release the unix user and its UPG through the backend. RemoveAccount
+			// deliberately leaves the home alone (that is what makes it reusable by
+			// detach), so purge removes it itself — after the archive, and only the
+			// path getent reported.
+			if err := p.RemoveAccount(ctx, user, provider.RemoveOpts{}); err != nil {
+				return err
 			}
-			if _, err := runner.Run(ctx, "", "groupdel", user); err != nil {
-				fmt.Fprintf(errW(cmd), "note: groupdel %s: %v (UPG may have been removed by userdel)\n", user, err)
+
+			// 4. remove the home. The archive above already succeeded, so a failure
+			// here loses nothing — say so and keep going rather than aborting a purge
+			// that has already deleted the account.
+			if home != "" {
+				if err := os.RemoveAll(home); err != nil {
+					fmt.Fprintf(errW(cmd), "warning: could not remove %s: %v (the archive is intact; remove it by hand)\n", home, err)
+				}
 			}
 
 			cmd.Printf("purged user %q (uid %d)\n", user, uid)

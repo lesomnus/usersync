@@ -6,9 +6,12 @@
 
 ---
 
-## 1. 배경 (구현자가 알아야 할 파일 서버 현황)
+## 1. 배경 (구현자가 알아야 할 대상 서버 현황)
 
-- **서버**: 파일 서버, Ubuntu 26.04 LTS, ZFS 풀 `tank`. 관리자는 sudo 가능한 계정으로 SSH 접속한다.
+> 호스트명·주소·계정 같은 **사이트 고유값은 이 저장소에 두지 않는다.** 여기 적힌 것은 설계가
+> 가정하는 *형태*이고, 실제 값은 사내 운영 문서에 있다. (이 저장소는 공개된다.)
+
+- **서버**: Ubuntu 26.04 LTS, ZFS 풀 `tank`. 관리자는 sudo 가능한 계정으로 SSH 접속한다.
 - **스토리지 레이아웃** (이미 존재):
   - `tank/research/home` → `/research/home` (개인 홈 루트)
   - `tank/research/groups` → `/research/groups` (그룹 폴더 루트)
@@ -492,7 +495,7 @@ type Samba interface {
   cmd/
     root.go              # 기존. plan/apply/export/purge 서브커맨드 등록
     plan.go  apply.go  export.go  purge.go
-  cmd/config/
+  internal/cmd/config/
     config.go            # 기존 Config 확장: Paths/Manage/Protect/Seed/Provider(운영설정)
     roster.go            # roster.yaml 파싱·검증 → Roster{Users,Groups}
   internal/
@@ -516,7 +519,7 @@ type Samba interface {
 ### 진행 상황 (2026-07-31)
 - ✅ **순수 코어**: `internal/idrange`(분류+floor 클램프), `internal/secret`(seed 파생+golden), `internal/roster`(types+strict load+validate), `internal/state`, `internal/reconcile`(status×actual 매트릭스). 단위테스트 통과.
 - ✅ **백엔드**: `internal/run`(injectable exec+Fake), `internal/provider`(shadow-utils: getent Scan + useradd/usermod/groupadd, golden-command 테스트), `internal/samba`(smbpasswd/pdbedit), `internal/fsops`(홈/그룹 폴더), `internal/report`(text/JSON), `internal/executor`(dispatch+Collect, fake 테스트).
-- ✅ **CLI**: `cmd/config` 운영설정(paths/manage/protect/on_out_of_scope/seed/provider) + `plan`(`--commands` 미리보기)·`apply`·`export`·`purge`(`--reserve` tombstone). greet 스캐폴딩 제거.
+- ✅ **CLI**: `internal/cmd/config` 운영설정(paths/manage/protect/on_out_of_scope/seed/provider) + `plan`(`--commands` 미리보기)·`apply`·`export`·`purge`(`--reserve` tombstone). greet 스캐폴딩 제거.
 - ✅ **기능 검증**: 스텁 getent/pdbedit로 E2E — plan/commands/export 동작, **`export | plan` = 0 action**(멱등 왕복, 홈/폴더 존재 시), out-of-scope error·skip, protected 하드 거부 확인.
 - ✅ **실계정 통합검증**: `internal/integration`(빌드태그 `integration`, root 아니면 self-skip) — 일회용 컨테이너에서 **진짜 useradd/samba**로 apply. §13 계정 항목 전부 통과(UPG, 홈 0700 소유, nologin, 비번 잠김, pdbedit 활성/비활성, 2770 setgid, 멱등, 오프보딩/재온보딩). 로컬은 dind 사이드카+`scripts/verify-integration.sh`, CI는 `ci.yaml`의 `integration` 잡이 **같은 `go test -tags integration`** 재사용. **이미지 push는 `build`(유닛)·`integration` 둘 다 통과해야 실행**(`needs`).
 - ✅ **SMB 실접속(wire-auth) 검증**: `TestSmbWireAuth` — 실제 `smbd` 기동 + `smbclient`로, 시드 파생 비번으로 인증해 **자기 홈 읽기/쓰기 OK, 남의 홈 `ACCESS_DENIED`, 틀린 비번 거부** 확인. (SSH 차단은 nologin+비번잠김으로 §13에서 이미 보장.)
@@ -557,15 +560,15 @@ type Samba interface {
     roster 선언을 전제로만 실행되고, 직후 재조회해 **다른 uid로 해석되면 에러**.
   - **`mode: audit` + `audit`**: 계정 소유권이 디렉터리로 넘어간 뒤의 상태. `apply`/`purge`는 거부하고,
     roster ↔ 실제 해석 결과를 대조해 missing/id-mismatch/tombstone-live/undeclared/collision을 리포트.
-- 🚧 **남음**: 파일 서버 실배포. (pw 실검증은 FreeBSD 호스트 필요 — Linux CI 불가.)
+- 🚧 **남음**: 실서버 배포. (pw 실검증은 FreeBSD 호스트 필요 — Linux CI 불가.)
 - 🚧 **정리 대상**: `purge`가 `userdel`을 직접 호출해 shadow-utils 전용이다. `detach`가 쓰는
   `Provider.RemoveAccount`처럼 인터페이스 뒤로 옮기면 busybox/pw에서도 동작한다.
 - 라이선스: **Apache-2.0**(메인테이너 지정).
 
 **0단계 — 스캐폴딩 정리**
-- `greet` 예시 명령/설정 제거. `cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–9999, gid 10000–19999, system_floor 1000, on_out_of_scope=error, provider auto).
+- `greet` 예시 명령/설정 제거. `internal/cmd/config.Config`에 운영 필드 추가: `paths`(home/groups), `manage`(uid/gid 창), `protect`(system_floor + uid/gid 예약 범위), `on_out_of_scope`(error|skip), `seed_file`, `provider`. §8 플래그와 매핑(`z.FallbackP` 기본값: uid 3000–9999, gid 10000–19999, system_floor 1000, on_out_of_scope=error, provider auto).
 - `idrange` 패키지: id → `Protected|Managed|OutOfScope` 분류. **`system_floor`는 `max(1000, cfg)`로 클램프**(1000 밑 불가). "보호 > 관리 > 범위 밖" 판정 함수 + 표 케이스 단위테스트.
-- `roster.yaml` 로더(`cmd/config/roster.go`): strict decode + 검증. **분류별 처리**: `Protected` 선언 → 항상 하드 에러; `OutOfScope` 선언 → `on_out_of_scope`에 따라 하드 에러 또는 경고 후 그 엔트리 드롭(스킵 목록 보존); 그 외 미정의 팀 참조 검증. **유일성**: `name`·`uid` 중복을 **active/disabled/reserved 전체에 걸쳐** 거부(= 예약 강제).
+- `roster.yaml` 로더(`internal/cmd/config/roster.go`): strict decode + 검증. **분류별 처리**: `Protected` 선언 → 항상 하드 에러; `OutOfScope` 선언 → `on_out_of_scope`에 따라 하드 에러 또는 경고 후 그 엔트리 드롭(스킵 목록 보존); 그 외 미정의 팀 참조 검증. **유일성**: `name`·`uid` 중복을 **active/disabled/reserved 전체에 걸쳐** 거부(= 예약 강제).
 
 **1단계 — reconcile 코어 (root 불필요, 순수 로직)**
 - 타입: `Roster{Users,Groups}`, `User.Status`(active|disabled|reserved), `State`(actual), `Action`(create/create-locked/update/enable/disable/refuse/skip/reserve-noop…).

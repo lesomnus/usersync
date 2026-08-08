@@ -31,9 +31,13 @@ on-prem AD has to carry verbatim as RFC2307 `uidNumber`/`gidNumber` — see
 [`identity-roadmap.md`](./identity-roadmap.md).
 
 `usersync.yaml` holds operational settings (paths, the managed id window, the
-protected id ranges, seed, backend). The schema mirrors
+protected id ranges, seed, backend). Both files are decoded **strictly** — an
+unknown key is an error, not a silent fallback to the safe-looking default.
+
+`roster.yaml`'s shape is mirrored by
 [`proto/usersync/roster.proto`](./proto/usersync/roster.proto) and stays
-protojson-compatible.
+protojson-compatible. (No codegen is wired up yet; the `gen/` path in its
+`go_package` is aspirational.)
 
 ## Commands
 
@@ -51,6 +55,9 @@ usersync shares          # print the smb.conf [homes]+[<team>] block from the ro
 usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kept); --reload reloads smbd
 usersync passwd <user>   # print a user's seed-derived initial SMB password (to deliver / reset to)
 usersync validate        # static-check config + roster (no root, no system access) — a CI/pre-commit gate
+usersync detach --keep-upg <user>   # recommended form: leaves the UPG so `ls -l` still names the group
+usersync config          # print the effective configuration after defaults
+usersync version         # print the build stamp
 ```
 
 Note: `xli` expects flags before positional args, so put every flag ahead of the
@@ -59,18 +66,34 @@ positional user, e.g. `usersync passwd --seed-file s user` or `usersync purge --
 The account backend is auto-detected (`provider: auto`): shadow-utils
 (`useradd`), busybox (`adduser`), or BSD `pw` — set `provider:` to pin one.
 
-Common flags: `--roster`, `--config`, `--json`, `--skip-out-of-scope`,
-`--seed-file`, `--home-base`, `--groups-base`.
+`--config` is a **root** flag and goes before the subcommand:
+`usersync --config alt.yaml plan`. Putting it after (`usersync plan --config …`)
+is rejected.
+
+Per-command flags: `--roster`, `--skip-out-of-scope`, `--home-base`,
+`--groups-base` on every roster-reading command; `--json` on `plan`/`apply`/`audit`;
+`--seed-file` on `plan`/`apply`/`passwd`. A command only accepts a flag it
+actually reads — `export --json` is an error, not a no-op.
+
+`detach` also takes `--keep-upg` (keep the user's private group locally),
+`--keep-smb` (leave the SMB account alone), and `--yes`.
 
 Bootstrapping an already-configured server, then staying declarative:
 
 ```sh
-usersync export > roster.yaml     # absorb current state
+usersync export > roster.yaml     # absorb current state (ONE TIME — see below)
 usersync plan                     # should show zero actions
 $EDITOR roster.yaml               # make changes
 usersync plan --commands          # review
 usersync apply                    # converge
 ```
+
+> `export` reads the existing `roster.yaml` to carry forward what no scan can
+> see: group descriptions, and `status: reserved` tombstones (a reserved user
+> has no account by definition). But `export > roster.yaml` makes the **shell**
+> truncate the file before usersync opens it, so that one form still loses them.
+> After the initial bootstrap, export somewhere else and diff:
+> `usersync export > roster.new.yaml && diff roster.yaml roster.new.yaml`.
 
 ## Lifecycle (`status`) and uid reuse
 
@@ -181,3 +204,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o usersync .   # static binar
 go build ./...          # compile check
 go test ./...           # the pure core (idrange/reconcile/roster/secret) needs no root
 ```
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

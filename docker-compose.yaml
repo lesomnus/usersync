@@ -1,19 +1,12 @@
+# Smoke-check the published image — nothing more.
+#
+# ghcr.io/lesomnus/usersync is a binary carrier (FROM scratch, see Dockerfile),
+# so `version` and `--help` are the only things that run here. Do NOT model a
+# deployment on this file: usersync needs root plus getent/useradd/smbpasswd,
+# which a scratch image does not have, and `privileged: true` would not conjure
+# them. To deploy, copy the binary into an image that has those tools
+# (admin-guide.md §1.1).
 services:
   app:
     image: ghcr.io/lesomnus/usersync:${REVISION:-local}
     command: [version]
-
-    network_mode: host
-    privileged: true
-
-    volumes:
-      - ./usersync.yaml:/usersync.yaml:ro
-
-    deploy:
-      resources:
-        limits:
-          cpus: "4"
-          memory: 64M
-        reservations:
-          cpus: "2"
-          memory: 32M

@@ -55,6 +55,8 @@ usersync shares          # print the smb.conf [homes]+[<team>] block from the ro
 usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kept); --reload reloads smbd
 usersync passwd <user>   # print a user's seed-derived initial SMB password (to deliver / reset to)
 usersync validate        # static-check config + roster (no root, no system access) — a CI/pre-commit gate
+usersync member add <user> <team>      # edit team membership IN the roster (no system change)
+usersync member remove <user> <team>   #   preserves comments and layout; run `apply` after
 usersync detach --keep-upg <user>   # recommended form: leaves the UPG so `ls -l` still names the group
 usersync config          # print the effective configuration after defaults
 usersync version         # print the build stamp
@@ -94,6 +96,27 @@ usersync apply                    # converge
 > truncate the file before usersync opens it, so that one form still loses them.
 > After the initial bootstrap, export somewhere else and diff:
 > `usersync export > roster.new.yaml && diff roster.yaml roster.new.yaml`.
+
+### Editing membership from a program
+
+`usersync member` is for callers that are not a person — a web UI, a script. It
+edits `roster.yaml` through the document's syntax tree rather than by decoding
+and re-encoding it, so comments, blank lines and `groups: [team-a]` flow style
+all survive and a membership change shows up as **one changed line**. Decoding
+and re-encoding the shipped roster rewrites 17 of its 46 lines, which is not
+data loss but is the difference between a reviewable change and a file that
+says everything changed.
+
+The edited roster is loaded and validated **before** it is written, so an edit
+that would make the roster unloadable is refused rather than saved — otherwise a
+bad call would be discovered at the next boot, by a server that will not start.
+
+It changes the declaration only. `usersync apply` still converges the system,
+which leaves room for `plan` in between exactly as there is for a hand edit.
+
+One caveat, once: the printer emits a single space before a trailing comment, so
+the first machine write re-aligns hand-aligned inline comments. Subsequent
+writes do not.
 
 ## Lifecycle (`status`) and uid reuse
 

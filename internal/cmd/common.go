@@ -95,7 +95,9 @@ func loadRoster(cmd *xli.Command, c *config.Config, cls *idrange.Classifier) (*r
 	if err != nil {
 		return nil, nil, z.Err(err, "validate roster %q", path)
 	}
-	return ro, skipped, nil
+	// Narrowed explicitly. Validate no longer does it as a side effect, so a
+	// caller that wants the whole declaration (to write it back) can have it.
+	return ro.Managed(cls), skipped, nil
 }
 
 // backends builds the provider and samba backends over the given runner.

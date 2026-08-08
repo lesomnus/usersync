@@ -90,6 +90,16 @@ func Load(r io.Reader) (*Roster, error) {
 //   - full_name must not contain ',' or ':' (GECOS field separators).
 //   - each user's supplementary group must be a defined group.
 //   - Protected ids are always a hard error; out-of-scope ids error or skip.
+// Validate DOES NOT MODIFY the receiver. It used to: it narrowed ro.Users and
+// ro.Groups to the managed subset in place, which made "check this roster" and
+// "throw away the parts I do not manage" the same call. That is fine for a
+// process that validates and then exits, and a trap for anything that validates
+// and then WRITES the file back — under `on_out_of_scope: skip` the entries it
+// dropped would be gone from disk, and a dropped entry is a released uid
+// reservation, which is the one thing this file exists to prevent.
+//
+// Callers that want the narrowed view ask for it: Validate reports, Managed
+// selects.
 func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, error) {
 	var errs []error
 	var skipped []Skipped
@@ -186,7 +196,32 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	if len(errs) > 0 {
 		return skipped, errors.Join(errs...)
 	}
-	ro.Groups = keptGroups
-	ro.Users = keptUsers
+	// Deliberately NOT assigned back onto ro. See the doc comment.
+	_, _ = keptGroups, keptUsers
 	return skipped, nil
+}
+
+// Managed returns a COPY of the roster narrowed to the entries this
+// installation manages: protected and out-of-scope ids are dropped.
+//
+// Call it after Validate, on a roster Validate accepted. The reconciler works
+// from this; anything that writes the roster back to disk must write the
+// ORIGINAL, because the difference between the two is exactly the set of
+// entries whose uid is reserved but not managed here.
+func (ro *Roster) Managed(cls *idrange.Classifier) *Roster {
+	out := &Roster{
+		Groups: make([]Group, 0, len(ro.Groups)),
+		Users:  make([]User, 0, len(ro.Users)),
+	}
+	for _, g := range ro.Groups {
+		if cls.GID(g.GID) == idrange.Managed {
+			out.Groups = append(out.Groups, g)
+		}
+	}
+	for _, u := range ro.Users {
+		if cls.UID(u.UID) == idrange.Managed {
+			out.Users = append(out.Users, u)
+		}
+	}
+	return out
 }

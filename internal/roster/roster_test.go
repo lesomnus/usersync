@@ -195,8 +195,20 @@ func TestOutOfScopeErrorVsSkip(t *testing.T) {
 	if len(skipped) != 1 || skipped[0].Name != "legacy" {
 		t.Fatalf("skipped = %v, want [legacy]", skipped)
 	}
-	if len(ro.Users) != 1 || ro.Users[0].Name != "ok" {
-		t.Fatalf("kept users = %v, want [ok]", ro.Users)
+	// Validate REPORTS; it does not edit. The distinction is load-bearing: a
+	// caller that validates and then writes the file back would otherwise erase
+	// every out-of-scope entry from disk, and an erased entry is a released uid
+	// reservation -- the one failure this file exists to prevent.
+	if len(ro.Users) != 2 {
+		t.Fatalf("Validate modified the roster: users = %v, want both still present", ro.Users)
+	}
+	// Managed is where the narrowing happens, and it works on a copy.
+	m := ro.Managed(testClassifier())
+	if len(m.Users) != 1 || m.Users[0].Name != "ok" {
+		t.Fatalf("Managed users = %v, want [ok]", m.Users)
+	}
+	if len(ro.Users) != 2 {
+		t.Fatalf("Managed modified its receiver: users = %v", ro.Users)
 	}
 }
 

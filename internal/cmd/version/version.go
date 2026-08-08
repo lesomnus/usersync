@@ -35,7 +35,7 @@ var build_info = BuildInfo{
 // at "(devel)". A module-mode install records no vcs.* settings at all — the
 // source came from the module proxy, not a checkout — but Main.Version is
 // exactly the requested version. Consulting only the VCS settings is why
-// `go install …@v0.1.0` used to print "YYMMDD-local" and an all-zero rev: a
+// `go install …@<version>` used to print "YYMMDD-local" and an all-zero rev: a
 // released binary that could not say which release it was.
 func Get() BuildInfo {
 	b := build_info

@@ -51,7 +51,7 @@ COPY --from=builder /dist/ /
 # image IS good for is handing the binary to an image that has those tools,
 # without dragging a Go toolchain into the consumer's build:
 #
-#   COPY --from=ghcr.io/lesomnus/usersync:v0.1.0 /usersync /usr/local/bin/usersync
+#   COPY --from=ghcr.io/lesomnus/usersync:edge /usersync /usr/local/bin/usersync
 #
 # The non-root USER and the --help default keep `docker run` on this image
 # harmless rather than misleading: it prints usage instead of half-pretending to

@@ -23,7 +23,7 @@
 정적 단일 바이너리다. 셋 중 하나로 배치한다.
 
 ```sh
-go install github.com/lesomnus/usersync@v0.1.0      # 1) Go 툴체인이 있으면
+go install github.com/lesomnus/usersync@latest       # 1) Go 툴체인이 있으면
 CGO_ENABLED=0 go build -o usersync .                # 2) 소스에서 직접
 ```
 
@@ -32,7 +32,7 @@ CGO_ENABLED=0 go build -o usersync .                # 2) 소스에서 직접
    이들 없이는 `apply`·`plan`·`export`·`audit`이 전부 실패한다. 이미지를 직접 돌리지 말고 이렇게 쓴다:
 
 ```dockerfile
-COPY --from=ghcr.io/lesomnus/usersync:v0.1.0 /usersync /usr/local/bin/usersync
+COPY --from=ghcr.io/lesomnus/usersync:edge /usersync /usr/local/bin/usersync
 ```
 
 usersync를 실제로 돌리는 곳(호스트든 컨테이너든)에는 **shadow-utils(또는 busybox/pw)와

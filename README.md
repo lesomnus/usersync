@@ -55,6 +55,7 @@ usersync shares          # print the smb.conf [homes]+[<team>] block from the ro
 usersync shares --write  # splice it into smb.conf (testparm-validated, .bak kept); --reload reloads smbd
 usersync passwd <user>   # print a user's seed-derived initial SMB password (to deliver / reset to)
 usersync validate        # static-check config + roster (no root, no system access) — a CI/pre-commit gate
+usersync roster          # print the DECLARED roster as JSON (vs `export`, which scans the system)
 usersync member add <user> <team>      # edit team membership IN the roster (no system change)
 usersync member remove <user> <team>   #   preserves comments and layout; run `apply` after
 usersync detach --keep-upg <user>   # recommended form: leaves the UPG so `ls -l` still names the group

@@ -30,6 +30,7 @@ func NewCmdRoot() *xli.Command {
 			NewCmdPasswd(),
 			NewCmdValidate(),
 			NewCmdMember(),
+			NewCmdRoster(),
 		},
 
 		Handler: xli.Chain(

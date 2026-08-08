@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/lesomnus/usersync/internal/cmd/config"
 	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/xli"
 	"github.com/lesomnus/xli/arg"
@@ -78,60 +79,24 @@ func memberOp(op, brief string) *xli.Command {
 			if p, ok := flg.Get[string](cmd, "roster"); ok && p != "" {
 				path = p
 			}
-			src, err := os.ReadFile(path)
-			if err != nil {
-				return z.Err(err, "read roster %q", path)
-			}
-
-			doc, err := roster.ParseDocument(src)
+			// Everything from here to the write is one critical section. It is a
+			// read-modify-write, and two concurrent edits without a lock lose one
+			// of them silently: both read the same bytes and the second write
+			// replaces the first, so the caller who added someone to a team is
+			// told it worked and the membership is not there.
+			var (
+				changed bool
+				groups  []string
+			)
+			err := roster.WithLock(path, func() error {
+				var err error
+				changed, groups, err = editMembership(cmd, c, path, op, user, group)
+				return err
+			})
 			if err != nil {
 				return err
 			}
 
-			// The group has to be one this roster declares. Without the check the
-			// edit would write a membership that `usersync apply` then rejects, so
-			// the failure would land on the next boot instead of on this caller.
-			if err := declaresGroup(src, group); err != nil {
-				return err
-			}
-
-			var changed bool
-			switch op {
-			case "add":
-				changed, err = doc.AddGroup(user, group)
-			default:
-				changed, err = doc.RemoveGroup(user, group)
-			}
-			if err != nil {
-				return err
-			}
-
-			out := doc.String()
-
-			// VALIDATE BEFORE WRITING. The boot sequence refuses to start on a
-			// roster that does not load, so an unvalidated write here turns a bad
-			// request into a server that will not come up — possibly not until the
-			// next restart, weeks later, with nothing connecting the two.
-			cls := c.Classifier()
-			policy, err := c.Policy()
-			if err != nil {
-				return err
-			}
-			edited, err := roster.Load(strings.NewReader(out))
-			if err != nil {
-				return fmt.Errorf("refusing to write: the edited roster does not load: %w", err)
-			}
-			if _, err := edited.Validate(cls, policy); err != nil {
-				return fmt.Errorf("refusing to write: the edited roster is invalid: %w", err)
-			}
-
-			if changed {
-				if err := roster.WriteFile(path, []byte(out)); err != nil {
-					return z.Err(err, "write roster %q", path)
-				}
-			}
-
-			groups, _ := doc.Groups(user)
 			if jsonRequested(cmd) {
 				enc := json.NewEncoder(cmd)
 				enc.SetIndent("", "  ")
@@ -151,6 +116,65 @@ func memberOp(op, brief string) *xli.Command {
 			return nil
 		}),
 	}
+}
+
+// editMembership is the critical section: read, edit, validate, write.
+func editMembership(cmd *xli.Command, c *config.Config, path, op, user, group string) (bool, []string, error) {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return false, nil, z.Err(err, "read roster %q", path)
+	}
+
+	doc, err := roster.ParseDocument(src)
+	if err != nil {
+		return false, nil, err
+	}
+
+	// The group has to be one this roster declares. Without the check the edit
+	// would write a membership that `usersync apply` then rejects, so the failure
+	// would land on the next boot instead of on this caller.
+	if err := declaresGroup(src, group); err != nil {
+		return false, nil, err
+	}
+
+	var changed bool
+	switch op {
+	case "add":
+		changed, err = doc.AddGroup(user, group)
+	default:
+		changed, err = doc.RemoveGroup(user, group)
+	}
+	if err != nil {
+		return false, nil, err
+	}
+
+	out := doc.String()
+
+	// VALIDATE BEFORE WRITING. The boot sequence refuses to start on a roster
+	// that does not load, so an unvalidated write turns a bad request into a
+	// server that will not come up — possibly not until the next restart, weeks
+	// later, with nothing connecting the two.
+	cls := c.Classifier()
+	policy, err := c.Policy()
+	if err != nil {
+		return false, nil, err
+	}
+	edited, err := roster.Load(strings.NewReader(out))
+	if err != nil {
+		return false, nil, fmt.Errorf("refusing to write: the edited roster does not load: %w", err)
+	}
+	if _, err := edited.Validate(cls, policy); err != nil {
+		return false, nil, fmt.Errorf("refusing to write: the edited roster is invalid: %w", err)
+	}
+
+	if changed {
+		if err := roster.WriteFile(path, []byte(out)); err != nil {
+			return false, nil, z.Err(err, "write roster %q", path)
+		}
+	}
+
+	groups, _ := doc.Groups(user)
+	return changed, groups, nil
 }
 
 func alreadyWord(op string) string {

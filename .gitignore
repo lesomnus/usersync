@@ -10,3 +10,8 @@
 # `git add -A` away from a permanently-cached module version.
 /usersync
 /usersync.exe
+
+# The sidecar lock `usersync member` takes beside the roster. It is created in
+# the roster's directory, which for an operator is a git checkout.
+roster.yaml.lock
+*.yaml.lock

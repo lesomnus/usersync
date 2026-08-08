@@ -130,6 +130,31 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 		}
 	}
 
+	// Owners must be users this roster declares. An owner who is not would be
+	// written into gshadow as a name the system may not resolve, and
+	// `gpasswd -A` fails at apply — so catching it here turns a half-applied run
+	// into a refusal to load.
+	declaredUser := map[string]bool{}
+	for _, u := range ro.Users {
+		declaredUser[u.Name] = true
+	}
+	for _, g := range ro.Groups {
+		seenOwner := map[string]bool{}
+		for _, o := range g.Owners {
+			if !validName(o) {
+				errs = append(errs, fmt.Errorf("group %q owner %q is not a valid name (must match %s)", g.Name, o, reName))
+				continue
+			}
+			if seenOwner[o] {
+				errs = append(errs, fmt.Errorf("group %q lists owner %q twice", g.Name, o))
+			}
+			seenOwner[o] = true
+			if !declaredUser[o] {
+				errs = append(errs, fmt.Errorf("group %q owner %q is not a user in this roster", g.Name, o))
+			}
+		}
+	}
+
 	seenUserName := map[string]bool{}
 	seenUID := map[uint32]string{}
 	for _, u := range ro.Users {

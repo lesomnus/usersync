@@ -74,6 +74,34 @@ type Group struct {
 	Name        string `yaml:"name"`
 	GID         uint32 `yaml:"gid"`
 	Description string `yaml:"description,omitempty"`
+
+	// Owners are the group's administrators — the people who may add and remove
+	// its members.
+	//
+	// Not an invention: POSIX already has this, in the third field of
+	// /etc/gshadow, and `gpasswd -A` is what sets it. An administrator there can
+	// run `gpasswd -a`/`-d` on that group WITHOUT being root, which is exactly
+	// the delegation being declared. usersync applies it, so the roster and the
+	// system can be compared (`usersync audit`) instead of the roster asserting
+	// something nothing enforces.
+	//
+	// Where the users have /usr/sbin/nologin and a locked unix password, no
+	// member can run gpasswd, so the gshadow entry is a RECORD rather than an
+	// access control — enforcement is whatever front end people actually reach.
+	// It is still worth writing where POSIX keeps it: `getent gshadow` then
+	// agrees with the roster, and an on-prem AD carries the same fact as a
+	// group's `managedBy`.
+	//
+	// Only shadow-utils has gshadow. busybox and pw have no equivalent, so this
+	// is reported as unsupported on those backends rather than silently dropped.
+	//
+	// Note what it does NOT change: the roster still owns the membership list.
+	// An administrator who runs `gpasswd -a` adds a member, and the next
+	// `usersync apply` takes them back out, because `users[].groups` is the
+	// desired state and apply replaces the set exactly. The delegation is real
+	// but the durable path is an edit to this file — which is what
+	// `usersync member` is for.
+	Owners []string `yaml:"owners,omitempty"`
 }
 
 // User is a managed SMB-only user.

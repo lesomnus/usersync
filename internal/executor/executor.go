@@ -151,6 +151,17 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 	case reconcile.UpdateUserGroups:
 		return d.Provider.SetSupplementaryGroups(ctx, a.Name, a.Groups)
 
+	case reconcile.SetGroupAdmins:
+		// A backend with no gshadow reports ErrUnsupported. That is not a failed
+		// action: nothing went wrong and retrying will not help, so it is
+		// swallowed here and surfaced once by the reconciler, which stops
+		// proposing it when the backend cannot answer.
+		err := d.Provider.SetGroupAdmins(ctx, a.Name, a.Groups)
+		if errors.Is(err, provider.ErrUnsupported) {
+			return nil
+		}
+		return err
+
 	case reconcile.EnsureHome:
 		return d.FS.EnsureHomeDir(filepath.Join(d.HomeBase, a.Name), a.UID, a.UID)
 

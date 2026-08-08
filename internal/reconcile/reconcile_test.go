@@ -390,3 +390,103 @@ func TestOrphanInvalidNameSurfacedNotExeced(t *testing.T) {
 		t.Fatalf("invalid-named orphan must still be surfaced as a Notice, got %v", kinds(got))
 	}
 }
+
+// Owners drift is its own action: a group can be entirely correct and still
+// have the wrong administrators.
+func TestSetGroupAdminsOnDrift(t *testing.T) {
+	ro := &roster.Roster{
+		Groups: []roster.Group{{Name: "team-a", GID: 7001, Owners: []string{"alice"}}},
+		Users:  []roster.User{{Name: "alice", UID: 3001, Groups: []string{"team-a"}}},
+	}
+	base := func(admins []string, known bool) *state.State {
+		st := state.New()
+		st.Groups["team-a"] = state.Group{
+			Name: "team-a", GID: 7001,
+			FolderExists: true, FolderPerm: 0o2770, FolderGID: 7001,
+			Admins: admins, AdminsKnown: known,
+		}
+		st.AllGroups["team-a"] = 7001
+		return st
+	}
+
+	t.Run("declared owner missing", func(t *testing.T) {
+		got := kindsFor(t, ro, base(nil, true), SetGroupAdmins)
+		if len(got) != 1 || got[0].Name != "team-a" {
+			t.Fatalf("actions = %v, want one set-group-admins for team-a", got)
+		}
+		if len(got[0].Groups) != 1 || got[0].Groups[0] != "alice" {
+			t.Errorf("admins = %v, want [alice]", got[0].Groups)
+		}
+	})
+
+	t.Run("already correct is a no-op", func(t *testing.T) {
+		if got := kindsFor(t, ro, base([]string{"alice"}, true), SetGroupAdmins); len(got) != 0 {
+			t.Errorf("actions = %v, want none", got)
+		}
+	})
+
+	// Order is not drift. gpasswd writes them sorted but a hand edit need not,
+	// and re-running on a reordering would make `plan` permanently dirty.
+	t.Run("order does not matter", func(t *testing.T) {
+		ro2 := &roster.Roster{
+			Groups: []roster.Group{{Name: "team-a", GID: 7001, Owners: []string{"bob", "alice"}}},
+			Users:  []roster.User{{Name: "alice", UID: 3001}, {Name: "bob", UID: 3002}},
+		}
+		if got := kindsFor(t, ro2, base([]string{"alice", "bob"}, true), SetGroupAdmins); len(got) != 0 {
+			t.Errorf("actions = %v, want none", got)
+		}
+	})
+
+	// A backend with no gshadow cannot tell. Proposing the change anyway would
+	// mean every run forever reports the same drift it can never fix.
+	t.Run("unknown is not drift", func(t *testing.T) {
+		if got := kindsFor(t, ro, base(nil, false), SetGroupAdmins); len(got) != 0 {
+			t.Errorf("actions = %v, want none when the backend has no gshadow", got)
+		}
+	})
+}
+
+// kindsFor reconciles and returns the actions of one kind.
+func kindsFor(t *testing.T, ro *roster.Roster, st *state.State, kind Kind) []Action {
+	t.Helper()
+	var out []Action
+	for _, a := range Reconcile(ro, st, cls()) {
+		if a.Kind == kind {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// A group being created has no administrators yet, so declared owners must be
+// applied then too -- otherwise a new team's owner is set only if someone later
+// notices the drift.
+func TestSetGroupAdminsOnCreate(t *testing.T) {
+	ro := &roster.Roster{
+		Groups: []roster.Group{{Name: "team-a", GID: 7001, Owners: []string{"alice"}}},
+		Users:  []roster.User{{Name: "alice", UID: 3001}},
+	}
+	st := state.New() // nothing exists
+
+	acts := Reconcile(ro, st, cls())
+
+	at := map[Kind]int{}
+	for i, a := range acts {
+		at[a.Kind] = i
+	}
+	for _, k := range []Kind{CreateGroup, CreateUser, SetGroupAdmins} {
+		if _, ok := at[k]; !ok {
+			t.Fatalf("kinds = %v, want %v present", kinds(acts), k)
+		}
+	}
+	// Order is load-bearing twice over: `gpasswd -A alice team-a` needs the
+	// GROUP to exist and it needs the USER alice to exist. Emitting it in the
+	// group loop fails on a fresh system with "user does not exist", and the
+	// delegation then lands only if somebody runs apply again.
+	if at[SetGroupAdmins] < at[CreateGroup] {
+		t.Errorf("set-group-admins at %d precedes create-group at %d", at[SetGroupAdmins], at[CreateGroup])
+	}
+	if at[SetGroupAdmins] < at[CreateUser] {
+		t.Errorf("set-group-admins at %d precedes create-user at %d", at[SetGroupAdmins], at[CreateUser])
+	}
+}

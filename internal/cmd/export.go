@@ -137,7 +137,22 @@ func stateToRoster(st *state.State, prior *roster.Roster) *roster.Roster {
 	ro := &roster.Roster{}
 
 	for _, g := range st.Groups {
-		ro.Groups = append(ro.Groups, roster.Group{Name: g.Name, GID: g.GID, Description: descs[g.Name]})
+		// Owners come from the SCAN, not from the prior roster: unlike a
+		// description, /etc/gshadow really does hold them, so exporting the
+		// system's answer is what makes `export | diff - roster.yaml` mean
+		// something for this field. A backend that cannot tell (no gshadow)
+		// leaves them absent rather than emitting an empty list, which would
+		// read as "this team has no owners".
+		var owners []string
+		if g.AdminsKnown {
+			owners = g.Admins
+		}
+		ro.Groups = append(ro.Groups, roster.Group{
+			Name:        g.Name,
+			GID:         g.GID,
+			Description: descs[g.Name],
+			Owners:      owners,
+		})
 	}
 	sort.Slice(ro.Groups, func(i, j int) bool { return ro.Groups[i].Name < ro.Groups[j].Name })
 

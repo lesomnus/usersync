@@ -260,3 +260,8 @@ func TestCollectFiltersToManaged(t *testing.T) {
 		t.Error("smb account should be merged in")
 	}
 }
+
+func (f fakeProvider) SetGroupAdmins(_ context.Context, group string, admins []string) error {
+	*f.log = append(*f.log, fmt.Sprintf("SetGroupAdmins(%s,%v)", group, admins))
+	return nil
+}

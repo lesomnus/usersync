@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -79,6 +80,35 @@ func (s *shadowUtils) Scan(ctx context.Context) (*state.State, error) {
 		}
 	}
 
+	// gshadow line: name:passwd:admin1,admin2:member1,member2
+	//
+	// Best effort. `getent gshadow` needs root and the file does not exist on
+	// every system, so a failure means "cannot tell" rather than "no
+	// administrators" — reporting the two the same way would make every declared
+	// owner read as drift on a run that simply could not look.
+	admins := map[string][]string{}
+	adminsKnown := false
+	// An empty-but-successful result counts as "could not tell", not "no
+	// administrators anywhere": a real gshadow always has at least `root`, so
+	// nothing is the signature of a backend that answered without looking.
+	if out, err := s.r.Run(ctx, "", "getent", "gshadow"); err == nil && strings.TrimSpace(out) != "" {
+		adminsKnown = true
+		for _, line := range strings.Split(out, "\n") {
+			f := strings.Split(strings.TrimSpace(line), ":")
+			if len(f) < 3 || f[0] == "" {
+				continue
+			}
+			names := []string{}
+			for _, a := range strings.Split(f[2], ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					names = append(names, a)
+				}
+			}
+			slices.Sort(names)
+			admins[f[0]] = names
+		}
+	}
+
 	// group line: name:x:gid:member1,member2 (members may be empty)
 	for _, line := range strings.Split(group, "\n") {
 		line = strings.TrimSpace(line)
@@ -94,7 +124,12 @@ func (s *shadowUtils) Scan(ctx context.Context) (*state.State, error) {
 			continue
 		}
 		name := f[0]
-		st.Groups[name] = state.Group{Name: name, GID: uint32(gid)}
+		st.Groups[name] = state.Group{
+			Name:        name,
+			GID:         uint32(gid),
+			Admins:      admins[name],
+			AdminsKnown: adminsKnown,
+		}
 
 		if f[3] == "" {
 			continue
@@ -228,3 +263,19 @@ func (s *shadowUtils) present(ctx context.Context, db, key string) bool {
 
 // u32 formats an id for a command-line argument.
 func u32(v uint32) string { return strconv.FormatUint(uint64(v), 10) }
+
+// SetGroupAdmins replaces the group's administrator list in /etc/gshadow.
+//
+// `gpasswd -A` takes the whole list, so this is a replacement rather than an
+// add — the roster declares the set, and a name that has been taken out of it
+// has to actually lose the delegation.
+//
+// An empty list clears it, which `gpasswd -A ""` does.
+func (s *shadowUtils) SetGroupAdmins(ctx context.Context, group string, admins []string) error {
+	sorted := slices.Clone(admins)
+	slices.Sort(sorted)
+	if _, err := s.r.Run(ctx, "", "gpasswd", "-A", strings.Join(sorted, ","), group); err != nil {
+		return fmt.Errorf("gpasswd -A %s: %w", group, err)
+	}
+	return nil
+}

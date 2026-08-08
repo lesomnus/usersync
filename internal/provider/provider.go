@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -85,7 +86,21 @@ type Provider interface {
 	// while the files — owned by numeric uid — stay exactly where they are.
 	// Destroying data is purge's job, and only purge's.
 	RemoveAccount(ctx context.Context, user string, opts RemoveOpts) error
+
+	// SetGroupAdmins replaces the group's administrator list — the third field
+	// of /etc/gshadow, which `gpasswd -A` writes and which lets those people run
+	// `gpasswd -a`/`-d` on that group without being root.
+	//
+	// It returns ErrUnsupported on a backend with no equivalent. That is not a
+	// failure: busybox and pw have no gshadow at all, and a caller should say so
+	// once rather than treat every declared owner as drift on every run.
+	SetGroupAdmins(ctx context.Context, group string, admins []string) error
 }
+
+// ErrUnsupported reports that the backend has no equivalent of the operation.
+// Distinct from a failure: nothing went wrong and retrying will not help, so
+// callers report it once and carry on.
+var ErrUnsupported = errors.New("provider: not supported by this backend")
 
 // Detect selects a backend by name; "auto"/"" probes PATH in order
 // useradd (shadow-utils), adduser (busybox), then pw (FreeBSD).

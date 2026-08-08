@@ -129,3 +129,11 @@ func (p *pw) present(ctx context.Context, show, name string) bool {
 	_, err := p.r.Run(ctx, "", "pw", show, name)
 	return err == nil
 }
+
+// SetGroupAdmins is not supported: there is no /etc/gshadow on this backend, so
+// there is nowhere to record a group administrator. Reported rather than
+// silently accepted, because a declared owner that goes nowhere would otherwise
+// look like drift on every run.
+func (p *pw) SetGroupAdmins(ctx context.Context, group string, admins []string) error {
+	return ErrUnsupported
+}

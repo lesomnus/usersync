@@ -154,7 +154,7 @@ func glyph(k reconcile.Kind) string {
 	case reconcile.CreateGroup, reconcile.CreateUser, reconcile.CreateUserDisabled,
 		reconcile.AddSmb, reconcile.EnableUser, reconcile.EnsureHome:
 		return "+"
-	case reconcile.UpdateUserGroups:
+	case reconcile.UpdateUserGroups, reconcile.SetGroupAdmins:
 		return "~"
 	case reconcile.DisableUser:
 		return "-"
@@ -170,7 +170,7 @@ func glyph(k reconcile.Kind) string {
 // isGroupKind reports whether the action targets a group (so its id is a gid).
 func isGroupKind(k reconcile.Kind) bool {
 	switch k {
-	case reconcile.CreateGroup, reconcile.RefuseGroup, reconcile.OrphanGroup:
+	case reconcile.CreateGroup, reconcile.RefuseGroup, reconcile.OrphanGroup, reconcile.SetGroupAdmins:
 		return true
 	default:
 		return false

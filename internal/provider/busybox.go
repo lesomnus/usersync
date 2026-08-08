@@ -190,3 +190,11 @@ func (b *busybox) present(ctx context.Context, db, key string) bool {
 	}
 	return strings.TrimSpace(out) != ""
 }
+
+// SetGroupAdmins is not supported: there is no /etc/gshadow on this backend, so
+// there is nowhere to record a group administrator. Reported rather than
+// silently accepted, because a declared owner that goes nowhere would otherwise
+// look like drift on every run.
+func (b *busybox) SetGroupAdmins(ctx context.Context, group string, admins []string) error {
+	return ErrUnsupported
+}

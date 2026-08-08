@@ -97,6 +97,39 @@ usersync apply                    # converge
 > After the initial bootstrap, export somewhere else and diff:
 > `usersync export > roster.new.yaml && diff roster.yaml roster.new.yaml`.
 
+### Team owners
+
+A group may declare `owners`: the people allowed to add and remove its members.
+
+```yaml
+groups:
+  - name: team-a
+    gid: 10001
+    owners: [skim]
+```
+
+This is not a usersync invention. POSIX keeps group administrators in the third
+field of `/etc/gshadow`, `gpasswd -A` is what writes them, and an administrator
+there can run `gpasswd -a`/`-d` on that group **without being root**. usersync
+applies the field, so `getent gshadow` and the roster agree and `plan` reports a
+disagreement instead of the roster asserting something nothing enforces. An
+on-prem AD later carries the same fact as the group's `managedBy`.
+
+Two things it does not do:
+
+- **The roster still owns the membership list.** An owner who runs `gpasswd -a`
+  adds a member, and the next `apply` takes them back out, because
+  `users[].groups` is the desired state and apply replaces the set exactly. The
+  durable path is an edit to the roster — see `usersync member` below.
+- **It grants nothing where users cannot log in.** With `/usr/sbin/nologin` and a
+  locked unix password, no member can run `gpasswd` at all, so the gshadow entry
+  is a record rather than an access control. The enforcement is whatever front
+  end people actually reach.
+
+Every name must be a user declared in the same roster. Only shadow-utils has
+gshadow; on busybox and pw the field is reported as unsupported rather than
+silently dropped.
+
 ### Editing membership from a program
 
 `usersync member` is for callers that are not a person — a web UI, a script. It

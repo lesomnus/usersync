@@ -33,6 +33,15 @@ type Group struct {
 	FolderExists bool
 	FolderPerm   uint32
 	FolderGID    uint32
+
+	// Admins is the group's administrator list from /etc/gshadow, sorted.
+	//
+	// AdminsKnown separates "this group has no administrators" from "this
+	// backend cannot tell": busybox and pw have no gshadow at all, and reporting
+	// their silence as an empty list would make every declared owner look like
+	// drift on every run.
+	Admins      []string
+	AdminsKnown bool
 }
 
 // Smb is an actual SMB (tdbsam) account and whether it is enabled.

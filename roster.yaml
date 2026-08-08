@@ -6,6 +6,7 @@ groups:
   - name: team-a
     gid: 10001
     description: Perception team
+    owners: [skim]             # may add/remove members (POSIX: /etc/gshadow admins)
   - name: team-b
     gid: 10002
     description: Planning team

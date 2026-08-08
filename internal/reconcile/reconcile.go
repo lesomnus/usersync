@@ -6,6 +6,7 @@ package reconcile
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/lesomnus/usersync/internal/idrange"
@@ -55,9 +56,10 @@ type Kind int
 
 const (
 	// --- groups ---
-	CreateGroup Kind = iota // group absent: groupadd + create folder
-	RefuseGroup             // gid mismatch or guard violation (manual)
-	OrphanGroup             // managed group not in roster: report only, never deleted
+	CreateGroup    Kind = iota // group absent: groupadd + create folder
+	RefuseGroup                // gid mismatch or guard violation (manual)
+	OrphanGroup                // managed group not in roster: report only, never deleted
+	SetGroupAdmins             // declared owners differ from /etc/gshadow: gpasswd -A
 	// --- users ---
 	CreateUser         // active, absent: full create + SMB enable
 	CreateUserDisabled // disabled, absent: create locked + SMB disabled
@@ -103,6 +105,8 @@ func (k Kind) String() string {
 		return "refuse-group"
 	case OrphanGroup:
 		return "orphan-group"
+	case SetGroupAdmins:
+		return "set-group-admins"
 	case CreateUser:
 		return "create-user"
 	case CreateUserDisabled:
@@ -164,6 +168,9 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		desiredUserNames[u.Name] = true
 	}
 
+	// Group-administrator actions, held back until after the users exist.
+	var ownerActions []Action
+
 	// Reverse indexes to detect a desired id already held by a DIFFERENT name
 	// (would make the create's useradd/groupadd fail cryptically).
 	uidOwner := map[uint32]string{}
@@ -204,13 +211,38 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 			// group and re-ensures the folder to 2770 setgid.
 			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, Reason: "group folder missing or wrong perms"})
 		}
-		// present, gid matches, folder correct => no-op.
+		// Owners are compared separately from the create/folder cases above,
+		// because a group can be entirely correct and still have the wrong
+		// administrators — and because the answer is "unknown" on a backend with
+		// no gshadow, which must not read as "they are all missing".
+		//
+		// A group about to be created has no administrators yet, so declared
+		// owners are drift by definition.
+		//
+		// COLLECTED, not appended: `gpasswd -A` needs both the group AND every
+		// named user to exist, and the users are created by the loop below. On a
+		// fresh system, emitting these here fails with "user does not exist" and
+		// the delegation lands only if someone runs apply a second time.
+		switch {
+		case !ok && len(g.Owners) > 0:
+			ownerActions = append(ownerActions, Action{Kind: SetGroupAdmins, Name: g.Name, GID: g.GID,
+				Groups: slices.Clone(g.Owners),
+				Reason: reasonf("owners %v declared on a new group", g.Owners)})
+		case ok && cur.AdminsKnown && adminsDrifted(g, cur):
+			ownerActions = append(ownerActions, Action{Kind: SetGroupAdmins, Name: g.Name, GID: g.GID,
+				Groups: slices.Clone(g.Owners),
+				Reason: reasonf("owners %v declared, %v actual", g.Owners, cur.Admins)})
+		}
+		// present, gid matches, folder correct, owners agree => no-op.
 	}
 
 	// --- users ---
 	for _, u := range desiredUsers {
 		out = append(out, reconcileUser(u, actual, cls, uidOwner, gidOwner)...)
 	}
+
+	// --- group administrators (after the users they name) ---
+	out = append(out, ownerActions...)
 
 	// --- orphan groups (managed, present, not desired) ---
 	for _, name := range sortedGroupNames(actual.Groups) {
@@ -386,4 +418,17 @@ func sortedUserNames(m map[string]state.User) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// adminsDrifted compares the declared owners with what gshadow holds.
+//
+// Order-insensitive: gpasswd writes them sorted, but a hand edit need not, and
+// re-running gpasswd because someone typed the same two names the other way
+// round would make `plan` permanently dirty.
+func adminsDrifted(g roster.Group, cur state.Group) bool {
+	want := slices.Clone(g.Owners)
+	have := slices.Clone(cur.Admins)
+	slices.Sort(want)
+	slices.Sort(have)
+	return !slices.Equal(want, have)
 }

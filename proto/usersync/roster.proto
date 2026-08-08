@@ -43,6 +43,16 @@ message Group {
 
   // Human-readable description, e.g. "Perception team". Display only.
   string description = 3;
+
+  // The group's administrators: the people who may add and remove its members.
+  //
+  // Maps to the third field of /etc/gshadow, which `gpasswd -A` writes and
+  // which lets those people run `gpasswd -a`/`-d` on the group without being
+  // root. Each name must be a user declared in the same roster.
+  //
+  // Only shadow-utils has gshadow; busybox and pw report it unsupported. An
+  // on-prem AD carries the same fact as the group's `managedBy`.
+  repeated string owners = 4;
 }
 
 // User is a managed SMB-only user (no interactive server login).

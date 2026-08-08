@@ -251,3 +251,39 @@ func TestReservedSmbSectionNameRejected(t *testing.T) {
 		}
 	}
 }
+
+// An owner is a delegation, so it has to name someone this roster knows. A name
+// that is not declared here would be written into gshadow as something the
+// system may not resolve, and `gpasswd -A` fails at apply — by which point the
+// run is half done.
+func TestOwnersMustBeDeclaredUsers(t *testing.T) {
+	mk := func(owners ...string) *Roster {
+		return &Roster{
+			Groups: []Group{{Name: "team-a", GID: 7001, Owners: owners}},
+			Users:  []User{{Name: "alice", UID: 3001, Groups: []string{"team-a"}}},
+		}
+	}
+
+	if _, err := mk("alice").Validate(testClassifier(), PolicyError); err != nil {
+		t.Fatalf("a declared user must be an acceptable owner: %v", err)
+	}
+	// An owner need NOT be a member: a manager who is not on the team is a real
+	// arrangement, and gshadow does not require membership either.
+	ro := &Roster{
+		Groups: []Group{{Name: "team-a", GID: 7001, Owners: []string{"boss"}}},
+		Users:  []User{{Name: "boss", UID: 3002}},
+	}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err != nil {
+		t.Errorf("an owner who is not a member must be allowed: %v", err)
+	}
+
+	for _, bad := range [][]string{
+		{"nobody"},         // not in this roster
+		{"alice", "alice"}, // listed twice
+		{"Bad Name"},       // not a valid account name
+	} {
+		if _, err := mk(bad...).Validate(testClassifier(), PolicyError); err == nil {
+			t.Errorf("owners %v were accepted", bad)
+		}
+	}
+}

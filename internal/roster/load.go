@@ -11,12 +11,30 @@ import (
 	"github.com/lesomnus/usersync/internal/idrange"
 )
 
-// NamePattern is the strict POSIX-portable account/group name: a lowercase
-// letter or underscore, then lowercase/digit/underscore/hyphen, up to 32 chars.
-// It is safe as a shadow-utils account name AND as a Samba smb.conf section
-// name, and forbids a leading '-' (which the target CLI would read as a flag),
-// whitespace, '/', '.', and control characters (smb.conf directive injection).
-const NamePattern = `^[a-z_][a-z0-9_-]{0,31}$`
+// NamePattern is the account/group name this tool will create: a lowercase
+// letter or underscore, then lowercase/digit/underscore/hyphen/dot, up to 32
+// characters. Safe as a shadow-utils name and as a Samba smb.conf section name.
+//
+// What each part is for:
+//
+//   - The FIRST character carries most of the weight: it forbids a leading '-',
+//     which useradd and groupadd would read as a flag, and it forbids a name
+//     that is '.' or '..'.
+//   - No whitespace, '/' or control characters. A newline is the real smb.conf
+//     injection vector — a group name becomes a `[<name>]` share section — and
+//     hasControlOrNewline below is what stops it. shadow-utils refuses those
+//     itself, one layer down, so this is the second of two.
+//   - 32 characters is the shadow-utils limit.
+//
+// A dot used to be excluded too, on the same "smb.conf injection" grounds. That
+// was wrong, and it was checked rather than argued before being removed:
+// `groupadd team.a` succeeds, `[team.a]` passes testparm, the share mounts, and
+// a file written into it comes out group `team.a` with setgid intact. A dot
+// cannot close a `[...]` section; only a newline can. Meanwhile
+// `firstname.lastname` is what most organisations actually call people, and a
+// directory service will hand us exactly that — so excluding it bought nothing
+// and would have had to be undone later, after uids were already on disk.
+const NamePattern = `^[a-z_][a-z0-9_.-]{0,31}$`
 
 var reName = regexp.MustCompile(NamePattern)
 

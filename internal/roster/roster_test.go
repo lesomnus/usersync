@@ -213,7 +213,10 @@ func TestOutOfScopeErrorVsSkip(t *testing.T) {
 }
 
 func TestInvalidNamesRejected(t *testing.T) {
-	for _, bad := range []string{"Team A", "1skim", "UPPER", "-x", "a/b", "x[y]", "a b", "x\ny", ""} {
+	// A LEADING dot is still refused even though a dot is now allowed inside a
+	// name: `useradd .` and a `[.]` share are both nonsense, and `..` would name
+	// a directory that is not the one meant.
+	for _, bad := range []string{"Team A", "1skim", "UPPER", "-x", "a/b", "x[y]", "a b", "x\ny", "", ".hidden", ".."} {
 		ro := &Roster{Users: []User{{Name: bad, UID: 3001}}}
 		if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
 			t.Errorf("user name %q must be rejected", bad)
@@ -227,6 +230,28 @@ func TestInvalidNamesRejected(t *testing.T) {
 	ok := &Roster{Groups: []Group{{Name: "team-a", GID: 7001}}, Users: []User{{Name: "s_kim", UID: 3001}}}
 	if _, err := ok.Validate(testClassifier(), PolicyError); err != nil {
 		t.Errorf("valid names must pass: %v", err)
+	}
+}
+
+// `firstname.lastname` is what most organisations call people, and it is what a
+// directory service hands over when one arrives.
+//
+// The dot was excluded on smb.conf-injection grounds that do not survive
+// checking: a dot cannot close a `[...]` section — only a newline can, and that
+// is refused separately (TestNewlineInjectionRejected) as well as by
+// shadow-utils itself. Verified on Debian trixie / Samba 4.x: `groupadd team.a`
+// succeeds, `[team.a]` passes testparm, the share mounts, and a file written
+// into it comes out group `team.a` with setgid intact.
+func TestDottedNamesAccepted(t *testing.T) {
+	for _, ok := range []string{"minseok.yang", "seunghyun.hwang", "team.a", "a.b.c"} {
+		ru := &Roster{Users: []User{{Name: ok, UID: 3001}}}
+		if _, err := ru.Validate(testClassifier(), PolicyError); err != nil {
+			t.Errorf("user name %q must be accepted: %v", ok, err)
+		}
+		rg := &Roster{Groups: []Group{{Name: ok, GID: 7001}}}
+		if _, err := rg.Validate(testClassifier(), PolicyError); err != nil {
+			t.Errorf("group name %q must be accepted: %v", ok, err)
+		}
 	}
 }
 

@@ -91,7 +91,18 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 			continue
 		}
 		if opts.FS != nil {
-			g.FolderExists, g.FolderPerm, _, g.FolderGID = opts.FS.Stat(filepath.Join(opts.GroupsBase, name))
+			path := filepath.Join(opts.GroupsBase, name)
+			g.FolderExists, g.FolderPerm, _, g.FolderGID = opts.FS.Stat(path)
+			// The folder's reader ACL is only readable when the folder is there.
+			// A read failure leaves ReadersKnown false, so it reads as "unknown"
+			// rather than "no readers" — the reconciler then heals it as part of
+			// the folder-drift path instead of concluding the ACL is correctly
+			// empty.
+			if g.FolderExists {
+				if gids, err := opts.FS.ReadReaderGIDs(path); err == nil {
+					g.ReaderGIDs, g.ReadersKnown = gids, true
+				}
+			}
 		}
 		out.Groups[name] = g
 	}
@@ -150,6 +161,15 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 
 	case reconcile.UpdateUserGroups:
 		return d.Provider.SetSupplementaryGroups(ctx, a.Name, a.Groups)
+
+	case reconcile.SetGroupReaders:
+		// The folder exists by now: for a new group the CreateGroup action ran
+		// first (same reconcile iteration, appended before this), and for an
+		// existing one it was already there. EnsureReaderACL refuses on a
+		// filesystem that cannot store ACLs, which becomes a failed action — the
+		// right outcome, because a declared reader nothing enforces is worse than
+		// an error at apply time.
+		return d.FS.EnsureReaderACL(filepath.Join(d.GroupsBase, a.Name), a.GID, a.ReaderGIDs)
 
 	case reconcile.SetGroupAdmins:
 		// A backend with no gshadow reports ErrUnsupported. That is not a failed

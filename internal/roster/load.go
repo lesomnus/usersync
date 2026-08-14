@@ -108,6 +108,7 @@ func Load(r io.Reader) (*Roster, error) {
 //   - full_name must not contain ',' or ':' (GECOS field separators).
 //   - each user's supplementary group must be a defined group.
 //   - Protected ids are always a hard error; out-of-scope ids error or skip.
+//
 // Validate DOES NOT MODIFY the receiver. It used to: it narrowed ro.Users and
 // ro.Groups to the managed subset in place, which made "check this roster" and
 // "throw away the parts I do not manage" the same call. That is fine for a
@@ -170,6 +171,30 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 			if !declaredUser[o] {
 				errs = append(errs, fmt.Errorf("group %q owner %q is not a user in this roster", g.Name, o))
 			}
+		}
+	}
+
+	// Readers name OTHER declared groups. A reader group that is not declared
+	// would be granted an ACL entry for a gid nothing resolves, and the drift
+	// check could never agree — so a name that does not exist is a refusal to
+	// load, exactly as an undeclared owner is.
+	for _, g := range ro.Groups {
+		seenReader := map[string]bool{}
+		for _, r := range g.Readers {
+			switch {
+			case !validName(r):
+				errs = append(errs, fmt.Errorf("group %q reader %q is not a valid name (must match %s)", g.Name, r, reName))
+				continue
+			case r == g.Name:
+				// The writer group already has rwx; naming it a reader would ask
+				// for a weaker grant on the same gid, which is meaningless.
+				errs = append(errs, fmt.Errorf("group %q lists itself as a reader", g.Name))
+			case seenReader[r]:
+				errs = append(errs, fmt.Errorf("group %q lists reader %q twice", g.Name, r))
+			case !seenGroupName[r]:
+				errs = append(errs, fmt.Errorf("group %q reader %q is not a group in this roster", g.Name, r))
+			}
+			seenReader[r] = true
 		}
 	}
 

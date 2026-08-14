@@ -7,6 +7,9 @@ groups:
     gid: 10001
     description: Perception team
     owners: [skim]             # may add/remove members (POSIX: /etc/gshadow admins)
+    readers: [team-a-ro]       # this group READS team-a's folder but cannot write it (POSIX ACL)
+  - name: team-a-ro            # the read-only companion; members join it via users[].groups
+    gid: 10011
   - name: team-b
     gid: 10002
     description: Planning team

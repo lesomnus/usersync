@@ -490,3 +490,84 @@ func TestSetGroupAdminsOnCreate(t *testing.T) {
 		t.Errorf("set-group-admins at %d precedes create-user at %d", at[SetGroupAdmins], at[CreateUser])
 	}
 }
+
+// okReaders marks a folder's reader ACL as known and matching gids, so a group
+// whose readers already agree is steady.
+func okReaders(g state.Group, gids ...uint32) state.Group {
+	g.ReadersKnown = true
+	g.ReaderGIDs = gids
+	return g
+}
+
+// A team with a declared reader group emits a SetGroupReaders carrying the
+// reader's numeric gid — resolved from the roster, so it does not depend on the
+// reader group existing on the system yet.
+func TestReadersEmitSetGroupReaders(t *testing.T) {
+	d := &roster.Roster{
+		Groups: []roster.Group{
+			{Name: "perception", GID: 7001, Readers: []string{"perception-ro"}},
+			{Name: "perception-ro", GID: 7011},
+		},
+	}
+	got := Reconcile(d, state.New(), cls())
+	if !hasKind(got, SetGroupReaders) {
+		t.Fatalf("want SetGroupReaders, got %v", kinds(got))
+	}
+	for _, a := range got {
+		if a.Kind == SetGroupReaders && a.Name == "perception" {
+			if len(a.ReaderGIDs) != 1 || a.ReaderGIDs[0] != 7011 {
+				t.Errorf("ReaderGIDs = %v; want [7011]", a.ReaderGIDs)
+			}
+		}
+	}
+	// The SetGroupReaders for perception must come AFTER its CreateGroup, so the
+	// folder exists when the ACL is applied.
+	var iCreate, iReaders = -1, -1
+	for i, a := range got {
+		if a.Name == "perception" && a.Kind == CreateGroup {
+			iCreate = i
+		}
+		if a.Name == "perception" && a.Kind == SetGroupReaders {
+			iReaders = i
+		}
+	}
+	if iCreate < 0 || iReaders < 0 || iCreate > iReaders {
+		t.Errorf("SetGroupReaders(%d) must follow CreateGroup(%d)", iReaders, iCreate)
+	}
+}
+
+// When the folder's ACL already matches the declared readers, nothing is
+// proposed — the feature is idempotent.
+func TestReadersSteadyWhenACLMatches(t *testing.T) {
+	d := &roster.Roster{
+		Groups: []roster.Group{
+			{Name: "perception", GID: 7001, Readers: []string{"perception-ro"}},
+			{Name: "perception-ro", GID: 7011},
+		},
+	}
+	s := state.New()
+	s.Groups["perception"] = okReaders(okFolder(state.Group{Name: "perception", GID: 7001}), 7011)
+	s.Groups["perception-ro"] = okReaders(okFolder(state.Group{Name: "perception-ro", GID: 7011}))
+	if got := Reconcile(d, s, cls()); hasKind(got, SetGroupReaders) {
+		t.Errorf("readers already correct, but proposed %v", kinds(got))
+	}
+}
+
+// A reader removed from the roster must drive the ACL back — the folder still
+// grants a gid the roster no longer declares.
+func TestReadersDriftWhenRosterNarrows(t *testing.T) {
+	d := &roster.Roster{
+		Groups: []roster.Group{{Name: "perception", GID: 7001}}, // no readers now
+	}
+	s := state.New()
+	s.Groups["perception"] = okReaders(okFolder(state.Group{Name: "perception", GID: 7001}), 7011)
+	got := Reconcile(d, s, cls())
+	if !hasKind(got, SetGroupReaders) {
+		t.Fatalf("a stale reader on the folder was not corrected: %v", kinds(got))
+	}
+	for _, a := range got {
+		if a.Kind == SetGroupReaders && len(a.ReaderGIDs) != 0 {
+			t.Errorf("want empty reader set to clear the ACL, got %v", a.ReaderGIDs)
+		}
+	}
+}

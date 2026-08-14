@@ -98,6 +98,17 @@ func Render(groups []roster.Group, homeBase, groupsBase string) string {
 		b.WriteString("   create mask = 0660\n")
 		b.WriteString("   directory mask = 2770\n")
 		b.WriteString("   force directory mode = 2770\n")
+		// A file created over SMB must inherit the folder's default POSIX ACL, so
+		// a reader group declared on the team (roster.Group.Readers) can read what
+		// somebody uploads through the explorer, exactly as it can read what the
+		// web path writes. With this off, whether the inherited entry survives is
+		// left to the filesystem; with it on, Samba is told to preserve it. It is
+		// harmless where the create mask already keeps the entry effective and
+		// necessary where it would not — so it is set unconditionally, because the
+		// safe default costs nothing and a team gains a reader without the share
+		// being regenerated. Measure against the deployment's smbd at cutover; see
+		// scripts/verify-samba-modes.sh.
+		b.WriteString("   inherit acls = yes\n")
 	}
 
 	b.WriteString(EndMarker + "\n")

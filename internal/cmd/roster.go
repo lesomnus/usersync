@@ -62,6 +62,7 @@ type groupView struct {
 	GID         uint32   `json:"gid"`
 	Description string   `json:"description,omitempty"`
 	Owners      []string `json:"owners"`
+	Readers     []string `json:"readers"`
 }
 
 type userView struct {
@@ -80,6 +81,7 @@ func newRosterView(ro *roster.Roster) rosterView {
 			GID:         g.GID,
 			Description: g.Description,
 			Owners:      nonNilStrings(g.Owners),
+			Readers:     nonNilStrings(g.Readers),
 		})
 	}
 	for _, u := range ro.Users {

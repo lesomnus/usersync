@@ -154,7 +154,7 @@ func glyph(k reconcile.Kind) string {
 	case reconcile.CreateGroup, reconcile.CreateUser, reconcile.CreateUserDisabled,
 		reconcile.AddSmb, reconcile.EnableUser, reconcile.EnsureHome:
 		return "+"
-	case reconcile.UpdateUserGroups, reconcile.SetGroupAdmins:
+	case reconcile.UpdateUserGroups, reconcile.SetGroupAdmins, reconcile.SetGroupReaders:
 		return "~"
 	case reconcile.DisableUser:
 		return "-"
@@ -170,7 +170,8 @@ func glyph(k reconcile.Kind) string {
 // isGroupKind reports whether the action targets a group (so its id is a gid).
 func isGroupKind(k reconcile.Kind) bool {
 	switch k {
-	case reconcile.CreateGroup, reconcile.RefuseGroup, reconcile.OrphanGroup, reconcile.SetGroupAdmins:
+	case reconcile.CreateGroup, reconcile.RefuseGroup, reconcile.OrphanGroup,
+		reconcile.SetGroupAdmins, reconcile.SetGroupReaders:
 		return true
 	default:
 		return false
@@ -188,6 +189,13 @@ func details(a reconcile.Action) string {
 	}
 	if len(a.Groups) > 0 {
 		parts = append(parts, "groups=["+strings.Join(a.Groups, ",")+"]")
+	}
+	if a.Kind == reconcile.SetGroupReaders {
+		gids := make([]string, len(a.ReaderGIDs))
+		for i, g := range a.ReaderGIDs {
+			gids[i] = fmt.Sprintf("%d", g)
+		}
+		parts = append(parts, "readers=["+strings.Join(gids, ",")+"]")
 	}
 	s := " " + strings.Join(parts, " ")
 	if a.Reason != "" {

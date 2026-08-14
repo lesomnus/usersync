@@ -39,6 +39,26 @@ func mergeGroups(desired, preserved []string) []string {
 	return out
 }
 
+// resolveReaderGIDs maps a group's declared reader NAMES to numeric gids, using
+// the roster's own group table, sorted and de-duplicated so the result compares
+// directly against what getfacl reads back from the folder. A name with no gid
+// is skipped here because load-time Validate already refuses an undeclared
+// reader, so this cannot silently drop a real one.
+func resolveReaderGIDs(g roster.Group, gidOf map[string]uint32) []uint32 {
+	seen := map[uint32]bool{}
+	var out []uint32
+	for _, name := range g.Readers {
+		gid, ok := gidOf[name]
+		if !ok || seen[gid] {
+			continue
+		}
+		seen[gid] = true
+		out = append(out, gid)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // homeDrifted reports whether a present user's home directory is missing or has
 // drifted from the desired 0700 owned by its UPG (uid == gid == UID).
 func homeDrifted(u roster.User, cur state.User) bool {
@@ -56,10 +76,11 @@ type Kind int
 
 const (
 	// --- groups ---
-	CreateGroup    Kind = iota // group absent: groupadd + create folder
-	RefuseGroup                // gid mismatch or guard violation (manual)
-	OrphanGroup                // managed group not in roster: report only, never deleted
-	SetGroupAdmins             // declared owners differ from /etc/gshadow: gpasswd -A
+	CreateGroup     Kind = iota // group absent: groupadd + create folder
+	RefuseGroup                 // gid mismatch or guard violation (manual)
+	OrphanGroup                 // managed group not in roster: report only, never deleted
+	SetGroupAdmins              // declared owners differ from /etc/gshadow: gpasswd -A
+	SetGroupReaders             // declared reader groups differ from the folder ACL: setfacl
 	// --- users ---
 	CreateUser         // active, absent: full create + SMB enable
 	CreateUserDisabled // disabled, absent: create locked + SMB disabled
@@ -107,6 +128,8 @@ func (k Kind) String() string {
 		return "orphan-group"
 	case SetGroupAdmins:
 		return "set-group-admins"
+	case SetGroupReaders:
+		return "set-group-readers"
 	case CreateUser:
 		return "create-user"
 	case CreateUserDisabled:
@@ -136,15 +159,16 @@ func (k Kind) String() string {
 // rendering and provider/samba dispatch, but nothing config-specific (home
 // paths and shell are supplied by the executor).
 type Action struct {
-	Kind     Kind
-	Name     string
-	UID      uint32
-	GID      uint32
-	FullName string
-	Groups   []string // desired supplementary groups (create / update)
-	Status   roster.Status
-	HasSmb   bool   // create*: an SMB account already exists — do not reset its password
-	Reason   string // for refuse / orphan / status context
+	Kind       Kind
+	Name       string
+	UID        uint32
+	GID        uint32
+	FullName   string
+	Groups     []string // desired supplementary groups (create / update)
+	Status     roster.Status
+	HasSmb     bool     // create*: an SMB account already exists — do not reset its password
+	Reason     string   // for refuse / orphan / status context
+	ReaderGIDs []uint32 // set-group-readers: the reader gids to enforce on the folder ACL
 }
 
 // Reconcile computes the actions to converge actual to desired. The classifier
@@ -160,9 +184,11 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 	sort.Slice(desiredUsers, func(i, j int) bool { return desiredUsers[i].Name < desiredUsers[j].Name })
 
 	desiredGroupNames := map[string]bool{}
+	desiredGroupGID := map[string]uint32{}
 	desiredUserNames := map[string]bool{}
 	for _, g := range desiredGroups {
 		desiredGroupNames[g.Name] = true
+		desiredGroupGID[g.Name] = g.GID
 	}
 	for _, u := range desiredUsers {
 		desiredUserNames[u.Name] = true
@@ -233,7 +259,32 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 				Groups: slices.Clone(g.Owners),
 				Reason: reasonf("owners %v declared, %v actual", g.Owners, cur.Admins)})
 		}
-		// present, gid matches, folder correct, owners agree => no-op.
+
+		// Reader-group ACLs. Resolved to numeric gids from the DECLARED roster —
+		// setfacl stores a numeric entry whether or not that group exists as a
+		// unix group yet, so this does not depend on the reader group having been
+		// created first, and the gid is what getfacl reads back for the compare.
+		//
+		// A brand-new group (state absent, or ReadersKnown false) with declared
+		// readers is drift by definition; the SetGroupReaders action runs after
+		// the CreateGroup that made the folder, because both are appended in this
+		// iteration in that order.
+		wantReaders := resolveReaderGIDs(g, desiredGroupGID)
+		switch {
+		case len(wantReaders) == 0 && (!ok || !cur.ReadersKnown):
+			// nothing declared and nothing to compare against — no-op.
+		case !ok || !cur.ReadersKnown:
+			if len(wantReaders) > 0 {
+				out = append(out, Action{Kind: SetGroupReaders, Name: g.Name, GID: g.GID,
+					ReaderGIDs: wantReaders,
+					Reason:     reasonf("readers %v declared on a new group", g.Readers)})
+			}
+		case !slices.Equal(wantReaders, cur.ReaderGIDs):
+			out = append(out, Action{Kind: SetGroupReaders, Name: g.Name, GID: g.GID,
+				ReaderGIDs: wantReaders,
+				Reason:     reasonf("readers %v declared, gids %v on folder", g.Readers, cur.ReaderGIDs)})
+		}
+		// present, gid matches, folder correct, owners agree, readers agree => no-op.
 	}
 
 	// --- users ---

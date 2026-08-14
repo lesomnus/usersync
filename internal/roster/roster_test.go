@@ -312,3 +312,36 @@ func TestOwnersMustBeDeclaredUsers(t *testing.T) {
 		}
 	}
 }
+
+func TestReadersMustBeDeclaredGroups(t *testing.T) {
+	ro := &Roster{
+		Groups: []Group{{Name: "perception", GID: 7001, Readers: []string{"ghost-ro"}}},
+	}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
+		t.Fatal("a reader naming an undeclared group was accepted")
+	}
+}
+
+func TestReadersRejectSelfAndDuplicates(t *testing.T) {
+	self := &Roster{Groups: []Group{{Name: "perception", GID: 7001, Readers: []string{"perception"}}}}
+	if _, err := self.Validate(testClassifier(), PolicyError); err == nil {
+		t.Error("a group listing itself as a reader was accepted")
+	}
+	dup := &Roster{Groups: []Group{
+		{Name: "perception", GID: 7001, Readers: []string{"ro", "ro"}},
+		{Name: "ro", GID: 7011},
+	}}
+	if _, err := dup.Validate(testClassifier(), PolicyError); err == nil {
+		t.Error("a duplicate reader was accepted")
+	}
+}
+
+func TestReadersAcceptedWhenDeclared(t *testing.T) {
+	ro := &Roster{Groups: []Group{
+		{Name: "perception", GID: 7001, Readers: []string{"perception-ro"}},
+		{Name: "perception-ro", GID: 7011},
+	}}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err != nil {
+		t.Fatalf("a valid reader declaration was rejected: %v", err)
+	}
+}

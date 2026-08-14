@@ -53,6 +53,13 @@ message Group {
   // Only shadow-utils has gshadow; busybox and pw report it unsupported. An
   // on-prem AD carries the same fact as the group's `managedBy`.
   repeated string owners = 4;
+
+  // Other groups whose members may READ this group's folder but not write it.
+  // Each must be a group declared in the same roster. Enforced with a POSIX ACL
+  // (an r-x access + default entry per reader group) rather than mode bits,
+  // which cannot split read from write within one group. Where the filesystem
+  // cannot store ACLs, apply refuses. See roster.Group.Readers.
+  repeated string readers = 5;
 }
 
 // User is a managed SMB-only user (no interactive server login).

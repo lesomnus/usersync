@@ -220,9 +220,20 @@ func (p printFS) EnsureHomeDir(path string, uid, gid uint32) error {
 	return nil
 }
 
-// Stat is unused during command preview (Collect uses the real FS); present
-// only to satisfy fsops.FS.
+// Stat and ReadReaderGIDs are unused during command preview (Collect uses the
+// real FS); present only to satisfy fsops.FS.
 func (printFS) Stat(string) (bool, uint32, uint32, uint32) { return false, 0, 0, 0 }
+
+func (printFS) ReadReaderGIDs(string) ([]uint32, error) { return nil, nil }
+
+func (p printFS) EnsureReaderACL(path string, _ uint32, readerGIDs []uint32) error {
+	if len(readerGIDs) == 0 {
+		fmt.Fprintf(p.w, "    setfacl -bk %s   # no readers\n", path)
+		return nil
+	}
+	fmt.Fprintf(p.w, "    setfacl (reader gids %v, access+default r-x) on %s\n", readerGIDs, path)
+	return nil
+}
 
 // dryDeps builds an executor whose backends print commands instead of executing
 // them (used by `plan --commands`). The deriver seed is irrelevant because the

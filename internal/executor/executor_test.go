@@ -100,6 +100,11 @@ func (f fakeFS) EnsureHomeDir(path string, uid, gid uint32) error {
 	return nil
 }
 func (f fakeFS) Stat(string) (bool, uint32, uint32, uint32) { return true, 0o700, 0, 0 }
+func (f fakeFS) ReadReaderGIDs(string) ([]uint32, error)    { return nil, nil }
+func (f fakeFS) EnsureReaderACL(path string, writerGID uint32, readerGIDs []uint32) error {
+	*f.log = append(*f.log, fmt.Sprintf("ReaderACL(%s,%d,%v)", path, writerGID, readerGIDs))
+	return nil
+}
 
 func newDeps(log *[]string) Deps {
 	return Deps{

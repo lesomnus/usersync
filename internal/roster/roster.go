@@ -102,6 +102,31 @@ type Group struct {
 	// but the durable path is an edit to this file — which is what
 	// `usersync member` is for.
 	Owners []string `yaml:"owners,omitempty"`
+
+	// Readers are OTHER groups whose members may READ this group's folder but
+	// not write it. Each name must be a group declared in the same roster;
+	// membership in a reader group is expressed the ordinary way, through
+	// `users[].groups`, so nothing new manages people.
+	//
+	// It is groups rather than a list of users on purpose. mode bits have three
+	// classes — owner, this group, other — with no room to split "writes" from
+	// "reads" inside one group, and opening `other` would publish the folder to
+	// everyone. The split lives in a POSIX ACL instead: the writer group keeps
+	// its rwx, and each reader group is granted r-x, on the folder AND as a
+	// default entry so files created afterwards inherit it. The kernel enforces
+	// the result, over both the web path and SMB, exactly as it enforces the
+	// mode bits (nas-design.md ADR-1).
+	//
+	// This does NOT reopen the self-service-sharing non-goal. That was refused
+	// for the group explosion of granting arbitrary user sets access to
+	// arbitrary folders — O(2^n). A reader group per team is O(teams): a second
+	// named axis on a team that already exists, not an arbitrary combination.
+	//
+	// Enforcement needs POSIX ACLs, which not every filesystem stores. Where the
+	// backend cannot, apply REFUSES rather than declaring a reader whose access
+	// nothing enforces — a folder that looks read-restricted and is not is worse
+	// than an error at apply time.
+	Readers []string `yaml:"readers,omitempty"`
 }
 
 // User is a managed SMB-only user.

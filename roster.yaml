@@ -13,14 +13,17 @@ groups:
   - name: team-b
     gid: 10002
     description: Planning team
-  - name: handbook             # anonymous READ: anyone (even not logged in) reads it
-    gid: 10003                 # over the web; roster users can also mount it over SMB.
-    description: Company handbook
-    anonymous: read            # members still gate writes; the anonymous identity can't mount SMB
-  - name: dropbox              # anonymous WRITE: a fully public folder — anyone reads and writes
-    gid: 10004
-    description: Public drop box
-    anonymous: write
+
+  # Public (anonymous) group example. The gid is deliberately at the TOP of the
+  # team range (19999) so a public folder is obvious at a glance and never gets
+  # confused with a normal, sequentially-numbered team. `anonymous` opens the
+  # folder to unauthenticated web visitors (and every roster user); it never
+  # opens SMB to guests. Use `read` for a world-readable folder members publish
+  # into, or `write` for a fully public drop box anyone can read AND write.
+  - name: public
+    gid: 19999
+    description: Public folder (anyone, no login)
+    anonymous: write           # world read+write; use `read` for read-only public
 
 # Users. `name` unique; `uid` within the user range (default 3000–9999).
 # The tool creates a matching UPG (User Private Group) with gid = uid.

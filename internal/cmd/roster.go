@@ -18,8 +18,10 @@ import (
 // that anyone who could edit gshadow directly could grant themselves the
 // delegation, which is a longer way round to the same place but a way round.
 //
-// It exists in JSON because the consumer is another program. darak has no YAML
-// parser and deliberately no external Go dependencies, so this is the seam.
+// It exists in JSON because the consumer is another program: darak shells out to
+// `usersync roster` and reads its stdout, and JSON is the natural wire format for
+// that subprocess boundary — stable to parse and independent of this file's YAML
+// schema, which is free to move without breaking the reader.
 func NewCmdRoster() *xli.Command {
 	return &xli.Command{
 		Name:  "roster",

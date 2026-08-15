@@ -179,6 +179,14 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	// check could never agree — so a name that does not exist is a refusal to
 	// load, exactly as an undeclared owner is.
 	for _, g := range ro.Groups {
+		// A reader group is a read-only grant. On a folder already open to the
+		// world (anonymous read or write), that grant adds nothing and, worse,
+		// contradicts the intent — so the two are refused together rather than one
+		// silently winning. It also keeps the reader ACL (which closes the default
+		// "other" entry) from fighting the open "other" mode bits.
+		if g.Anonymous != AnonNone && len(g.Readers) > 0 {
+			errs = append(errs, fmt.Errorf("group %q is anonymous (%s) and also lists readers — a read-only reader is meaningless on a world-open folder; remove one", g.Name, g.Anonymous))
+		}
 		seenReader := map[string]bool{}
 		for _, r := range g.Readers {
 			switch {

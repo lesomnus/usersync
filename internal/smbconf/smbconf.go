@@ -74,7 +74,21 @@ func Render(groups []roster.Group, homeBase, groupsBase string) string {
 		fmt.Fprintf(&b, "   path = %s\n", oneLine(filepath.Join(groupsBase, name)))
 		b.WriteString("   browseable = yes\n")
 		b.WriteString("   read only = no\n")
-		fmt.Fprintf(&b, "   valid users = @%s\n", name)
+		switch g.Anonymous {
+		case roster.AnonNone:
+			// Private team share: only members connect; the folder's mode does the
+			// rest. Non-members are turned away at the share, not just at the file.
+			fmt.Fprintf(&b, "   valid users = @%s\n", name)
+		default:
+			// Anonymous (read or write): ANY roster user may mount and read, so the
+			// share is not gated to the team — the open "other" mode bits on the
+			// folder decide what a non-member can actually do (read on 2775, also
+			// write on 2777). `guest ok = no` keeps this web-only for the anonymous
+			// identity: a non-account guest still cannot mount, even if the global
+			// `map to guest` would otherwise admit one. That is the whole point —
+			// anonymous access is a web capability, never an SMB one.
+			b.WriteString("   guest ok = no\n")
+		}
 		fmt.Fprintf(&b, "   force group = %s\n", name)
 		// Samba computes a new object's mode as (base & mask) | force, where base
 		// comes from the DOS attributes — SMB carries no unix mode. The base is
@@ -95,9 +109,26 @@ func Render(groups []roster.Group, homeBase, groupsBase string) string {
 		// this configuration, and it would override the DOS-attribute mapping in
 		// one that maps read-only onto the permission bits. Both claims were
 		// checked against a real smbd — see scripts/verify-samba-modes.sh.
-		b.WriteString("   create mask = 0660\n")
-		b.WriteString("   directory mask = 2770\n")
-		b.WriteString("   force directory mode = 2770\n")
+		// The "other" bits track the anonymous level, so a file or folder made
+		// over SMB is born as reachable to the world as the share is: 0660/2770
+		// keeps them closed (private team), 0664/2775 lets the world read, and
+		// 0666/2777 lets the world write. Without this, content uploaded through
+		// the explorer would be invisible to the anonymous web reader that the
+		// folder's own mode admits — the SMB path and the web path must agree.
+		switch g.Anonymous {
+		case roster.AnonRead:
+			b.WriteString("   create mask = 0664\n")
+			b.WriteString("   directory mask = 2775\n")
+			b.WriteString("   force directory mode = 2775\n")
+		case roster.AnonWrite:
+			b.WriteString("   create mask = 0666\n")
+			b.WriteString("   directory mask = 2777\n")
+			b.WriteString("   force directory mode = 2777\n")
+		default:
+			b.WriteString("   create mask = 0660\n")
+			b.WriteString("   directory mask = 2770\n")
+			b.WriteString("   force directory mode = 2770\n")
+		}
 		// A file created over SMB must inherit the folder's default POSIX ACL, so
 		// a reader group declared on the team (roster.Group.Readers) can read what
 		// somebody uploads through the explorer, exactly as it can read what the

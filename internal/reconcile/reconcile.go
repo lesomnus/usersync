@@ -66,9 +66,12 @@ func homeDrifted(u roster.User, cur state.User) bool {
 }
 
 // folderDrifted reports whether a present group's folder is missing or has
-// drifted from the desired 2770 setgid owned by the group.
+// drifted from the desired setgid mode (2770, or 2775/2777 when the group grants
+// anonymous read/write) owned by the group. Changing a group's `anonymous` level
+// changes the desired mode, so a level change surfaces here as drift and heals
+// through the same CreateGroup path.
 func folderDrifted(g roster.Group, cur state.Group) bool {
-	return !cur.FolderExists || cur.FolderPerm != 0o2770 || cur.FolderGID != g.GID
+	return !cur.FolderExists || cur.FolderPerm != g.Anonymous.FolderPerm() || cur.FolderGID != g.GID
 }
 
 // Kind is the type of a reconcile action.
@@ -169,6 +172,7 @@ type Action struct {
 	HasSmb     bool     // create*: an SMB account already exists — do not reset its password
 	Reason     string   // for refuse / orphan / status context
 	ReaderGIDs []uint32 // set-group-readers: the reader gids to enforce on the folder ACL
+	DirPerm    uint32   // create-group: the setgid folder mode to ensure (2770/2775/2777)
 }
 
 // Reconcile computes the actions to converge actual to desired. The classifier
@@ -227,15 +231,16 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 					Reason: reasonf("gid %d already held by group %q", g.GID, owner)})
 				break
 			}
-			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, Reason: g.Description})
+			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, DirPerm: g.Anonymous.FolderPerm(), Reason: g.Description})
 		case cur.GID != g.GID:
 			out = append(out, Action{Kind: RefuseGroup, Name: g.Name, GID: g.GID,
 				Reason: reasonf("gid %d desired, %d actual — change is manual", g.GID, cur.GID)})
 		case folderDrifted(g, cur):
 			// group exists but its folder is missing or its perms/owner drifted
-			// (or a partial create): CreateGroup's dispatch is idempotent for the
-			// group and re-ensures the folder to 2770 setgid.
-			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, Reason: "group folder missing or wrong perms"})
+			// (or a partial create, or the anonymous level changed): CreateGroup's
+			// dispatch is idempotent for the group and re-ensures the folder to the
+			// desired setgid mode.
+			out = append(out, Action{Kind: CreateGroup, Name: g.Name, GID: g.GID, DirPerm: g.Anonymous.FolderPerm(), Reason: "group folder missing or wrong perms"})
 		}
 		// Owners are compared separately from the create/folder cases above,
 		// because a group can be entirely correct and still have the wrong

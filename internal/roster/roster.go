@@ -69,6 +69,92 @@ func (s Status) MarshalYAML() ([]byte, error) {
 	return []byte(s.String()), nil
 }
 
+// Anonymous is the level of unauthenticated ("anonymous") access a group's
+// folder grants over the web. The zero value is AnonNone, so an omitted
+// `anonymous` key means the folder is private to its members and readers.
+//
+// It governs one thing only: the folder's "other" (world) permission bits, the
+// third mode class. AnonNone leaves them closed (2770); AnonRead opens read+
+// traverse (2775); AnonWrite opens read+write (2777, a fully public folder).
+// The kernel then enforces the result over every path — the web's anonymous
+// helper reaches exactly the world-accessible folders and nothing else, and a
+// logged-in roster user reaches them the same way an ordinary "other" would.
+//
+// SMB is deliberately NOT widened to guests: an anonymous folder stays
+// `guest ok = no`, so the anonymous (non-account) identity has no way to mount
+// it — anonymous access is web-only — while any roster user can still mount it
+// because the open "other" bits admit them (smbconf.go).
+type Anonymous int
+
+const (
+	// AnonNone: no anonymous access; folder is 2770 (members write, readers read).
+	AnonNone Anonymous = iota
+	// AnonRead: anyone, even not signed in, may READ the folder (2775, o+rx).
+	AnonRead
+	// AnonWrite: anyone may READ and WRITE — a fully public folder (2777, o+rwx).
+	AnonWrite
+)
+
+func (a Anonymous) String() string {
+	switch a {
+	case AnonNone:
+		return "none"
+	case AnonRead:
+		return "read"
+	case AnonWrite:
+		return "write"
+	default:
+		return fmt.Sprintf("Anonymous(%d)", int(a))
+	}
+}
+
+// ParseAnonymous maps a YAML scalar to an Anonymous. Empty and "none" both map
+// to AnonNone so the field is optional.
+func ParseAnonymous(s string) (Anonymous, error) {
+	switch strings.TrimSpace(s) {
+	case "", "none":
+		return AnonNone, nil
+	case "read":
+		return AnonRead, nil
+	case "write":
+		return AnonWrite, nil
+	default:
+		return AnonNone, fmt.Errorf("invalid anonymous %q (want none|read|write)", s)
+	}
+}
+
+// UnmarshalYAML implements goccy's BytesUnmarshaler so `anonymous: read` parses
+// directly to the enum.
+func (a *Anonymous) UnmarshalYAML(b []byte) error {
+	raw := strings.Trim(strings.TrimSpace(string(b)), `"'`)
+	v, err := ParseAnonymous(raw)
+	if err != nil {
+		return err
+	}
+	*a = v
+	return nil
+}
+
+// MarshalYAML encodes an Anonymous as its lowercase name.
+func (a Anonymous) MarshalYAML() ([]byte, error) {
+	return []byte(a.String()), nil
+}
+
+// FolderPerm is the directory mode a group's folder must have for this level,
+// with the setgid bit folded in as 0o2000 (matching state.Group.FolderPerm, so
+// the reconciler compares desired against observed directly). Only the "other"
+// nibble changes with the level; owner and group stay rwx/rwx.
+func (a Anonymous) FolderPerm() uint32 {
+	switch a {
+	case AnonRead:
+		return 0o2775
+	case AnonWrite:
+		return 0o2777
+	default:
+		return 0o2770
+	}
+}
+
 // Group is a shared (team) group and its backing folder.
 type Group struct {
 	Name        string `yaml:"name"`
@@ -127,6 +213,16 @@ type Group struct {
 	// nothing enforces — a folder that looks read-restricted and is not is worse
 	// than an error at apply time.
 	Readers []string `yaml:"readers,omitempty"`
+
+	// Anonymous opens this group's folder to unauthenticated web visitors. See
+	// the Anonymous type. `read` makes it world-readable (any roster user OR an
+	// anonymous web visitor may read; roster members still gate writes), `write`
+	// makes it fully public (anyone may read and write). It is web-facing access
+	// via open "other" bits, NOT an SMB guest share — the anonymous identity can
+	// never mount over SMB. A reader group and anonymous access are mutually
+	// exclusive (load.go): a read-only reader is meaningless on a folder already
+	// open to the world.
+	Anonymous Anonymous `yaml:"anonymous,omitempty"`
 }
 
 // User is a managed SMB-only user.

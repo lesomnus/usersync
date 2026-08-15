@@ -63,6 +63,10 @@ type groupView struct {
 	Description string   `json:"description,omitempty"`
 	Owners      []string `json:"owners"`
 	Readers     []string `json:"readers"`
+	// Anonymous is the folder's unauthenticated-access level: "none", "read", or
+	// "write". darak reads this to decide which folders to show anonymous
+	// visitors and whether the anonymous helper may write.
+	Anonymous string `json:"anonymous"`
 }
 
 type userView struct {
@@ -82,6 +86,7 @@ func newRosterView(ro *roster.Roster) rosterView {
 			Description: g.Description,
 			Owners:      nonNilStrings(g.Owners),
 			Readers:     nonNilStrings(g.Readers),
+			Anonymous:   g.Anonymous.String(),
 		})
 	}
 	for _, u := range ro.Users {

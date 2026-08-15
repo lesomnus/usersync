@@ -39,6 +39,60 @@ func TestRender(t *testing.T) {
 }
 
 // sections parses the rendered block into section -> key -> value so a test can
+// An anonymous share must widen exactly two things and nothing else: the "other"
+// mode bits (so the world can read, or read+write) and the connect gate (any
+// roster user, not just members). It must NOT become a guest share.
+func TestAnonymousShares(t *testing.T) {
+	gs := []roster.Group{
+		{Name: "pub-r", GID: 10001, Anonymous: roster.AnonRead},
+		{Name: "pub-w", GID: 10002, Anonymous: roster.AnonWrite},
+		{Name: "team", GID: 10003}, // AnonNone control
+	}
+	secs := sections(Render(gs, "/research/home", "/research/groups"))
+
+	// Read-only public: world may read (0664/2775), not write.
+	r := secs["pub-r"]
+	if _, ok := r["valid users"]; ok {
+		t.Error("anonymous share must not gate connect to members (no valid users)")
+	}
+	if r["guest ok"] != "no" {
+		t.Errorf("anonymous share must set guest ok = no, got %q", r["guest ok"])
+	}
+	if m := octal(t, r, "create mask"); m&0o004 == 0 || m&0o002 != 0 {
+		t.Errorf("pub-r files must be world-readable but not world-writable, got create mask %04o", m)
+	}
+	if m := octal(t, r, "directory mask"); m != 0o2775 {
+		t.Errorf("pub-r directory mask = %04o, want 2775", m)
+	}
+
+	// Fully public: world may write too (0666/2777).
+	w := secs["pub-w"]
+	if _, ok := w["valid users"]; ok {
+		t.Error("public share must not gate connect to members")
+	}
+	if w["guest ok"] != "no" {
+		t.Errorf("public share must set guest ok = no, got %q", w["guest ok"])
+	}
+	if m := octal(t, w, "create mask"); m&0o006 != 0o006 {
+		t.Errorf("pub-w files must be world-writable, got create mask %04o", m)
+	}
+	if m := octal(t, w, "directory mask"); m != 0o2777 {
+		t.Errorf("pub-w directory mask = %04o, want 2777", m)
+	}
+
+	// A private team is untouched: members-only, no other bits, no guest key.
+	team := secs["team"]
+	if team["valid users"] != "@team" {
+		t.Errorf("private team must stay gated to @team, got %q", team["valid users"])
+	}
+	if _, ok := team["guest ok"]; ok {
+		t.Error("private team must not emit a guest key")
+	}
+	if m := octal(t, team, "create mask"); m&0o007 != 0 {
+		t.Errorf("private team files must not be reachable by other, got %04o", m)
+	}
+}
+
 // reason about the emitted directives rather than string-matching them.
 func sections(block string) map[string]map[string]string {
 	out := map[string]map[string]string{}

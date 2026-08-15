@@ -322,6 +322,40 @@ func TestReadersMustBeDeclaredGroups(t *testing.T) {
 	}
 }
 
+func TestAnonymousParse(t *testing.T) {
+	for in, want := range map[string]Anonymous{
+		"": AnonNone, "none": AnonNone, "read": AnonRead, "write": AnonWrite,
+	} {
+		got, err := ParseAnonymous(in)
+		if err != nil || got != want {
+			t.Errorf("ParseAnonymous(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	if _, err := ParseAnonymous("public"); err == nil {
+		t.Error("an invalid anonymous level was accepted")
+	}
+	for a, perm := range map[Anonymous]uint32{AnonNone: 0o2770, AnonRead: 0o2775, AnonWrite: 0o2777} {
+		if a.FolderPerm() != perm {
+			t.Errorf("%s.FolderPerm() = %04o, want %04o", a, a.FolderPerm(), perm)
+		}
+	}
+}
+
+func TestAnonymousAndReadersAreExclusive(t *testing.T) {
+	ro := &Roster{Groups: []Group{
+		{Name: "pub", GID: 7001, Anonymous: AnonRead, Readers: []string{"pub-ro"}},
+		{Name: "pub-ro", GID: 7011},
+	}}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
+		t.Fatal("an anonymous group that also lists readers was accepted")
+	}
+	// Anonymous alone is fine.
+	ok := &Roster{Groups: []Group{{Name: "pub", GID: 7001, Anonymous: AnonWrite}}}
+	if _, err := ok.Validate(testClassifier(), PolicyError); err != nil {
+		t.Fatalf("a plain anonymous group was rejected: %v", err)
+	}
+}
+
 func TestReadersRejectSelfAndDuplicates(t *testing.T) {
 	self := &Roster{Groups: []Group{{Name: "perception", GID: 7001, Readers: []string{"perception"}}}}
 	if _, err := self.Validate(testClassifier(), PolicyError); err == nil {

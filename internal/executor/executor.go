@@ -152,7 +152,7 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 		if err := d.Provider.EnsureGroup(ctx, provider.GroupSpec{Name: a.Name, GID: a.GID}); err != nil {
 			return err
 		}
-		return d.FS.EnsureGroupDir(filepath.Join(d.GroupsBase, a.Name), a.GID)
+		return d.FS.EnsureGroupDir(filepath.Join(d.GroupsBase, a.Name), a.GID, a.DirPerm)
 
 	case reconcile.CreateUser:
 		return d.createUser(ctx, a, true)

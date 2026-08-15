@@ -210,8 +210,11 @@ func (p printRunner) Run(_ context.Context, stdin, name string, args ...string) 
 
 type printFS struct{ w io.Writer }
 
-func (p printFS) EnsureGroupDir(path string, gid uint32) error {
-	fmt.Fprintf(p.w, "    mkdir -p %s && chgrp %d %s && chmod 2770 %s\n", path, gid, path, path)
+func (p printFS) EnsureGroupDir(path string, gid, perm uint32) error {
+	if perm == 0 {
+		perm = 0o2770
+	}
+	fmt.Fprintf(p.w, "    mkdir -p %s && chgrp %d %s && chmod %o %s\n", path, gid, path, perm, path)
 	return nil
 }
 

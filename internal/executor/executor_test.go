@@ -91,7 +91,7 @@ func (f fakeSamba) Delete(_ context.Context, user string) error {
 
 type fakeFS struct{ log *[]string }
 
-func (f fakeFS) EnsureGroupDir(path string, gid uint32) error {
+func (f fakeFS) EnsureGroupDir(path string, gid, perm uint32) error {
 	*f.log = append(*f.log, fmt.Sprintf("GroupDir(%s,%d)", path, gid))
 	return nil
 }

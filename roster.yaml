@@ -13,6 +13,14 @@ groups:
   - name: team-b
     gid: 10002
     description: Planning team
+  - name: handbook             # anonymous READ: anyone (even not logged in) reads it
+    gid: 10003                 # over the web; roster users can also mount it over SMB.
+    description: Company handbook
+    anonymous: read            # members still gate writes; the anonymous identity can't mount SMB
+  - name: dropbox              # anonymous WRITE: a fully public folder — anyone reads and writes
+    gid: 10004
+    description: Public drop box
+    anonymous: write
 
 # Users. `name` unique; `uid` within the user range (default 3000–9999).
 # The tool creates a matching UPG (User Private Group) with gid = uid.

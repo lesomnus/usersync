@@ -27,8 +27,11 @@ var ErrACLUnsupported = errors.New("filesystem does not support POSIX ACLs")
 // FS creates and permissions the home and group directories, and observes a
 // directory's presence/mode/owner (used to detect drift / partial provisioning).
 type FS interface {
-	// EnsureGroupDir makes path 2770 (setgid) owned by group gid.
-	EnsureGroupDir(path string, gid uint32) error
+	// EnsureGroupDir makes path a setgid directory owned by group gid, with the
+	// given mode (perm bits plus 0o2000 setgid, e.g. 0o2770 private, or 0o2775 /
+	// 0o2777 when the group grants anonymous read / write). A zero perm defaults
+	// to 0o2770.
+	EnsureGroupDir(path string, gid, perm uint32) error
 	// EnsureHomeDir makes path 0700 owned by uid:gid.
 	EnsureHomeDir(path string, uid, gid uint32) error
 	// Stat reports whether path exists and, if so, its permission bits (with the
@@ -63,8 +66,9 @@ func (OS) Stat(path string) (bool, uint32, uint32, uint32) {
 	return true, perm, st.Uid, st.Gid
 }
 
-func (OS) EnsureGroupDir(path string, gid uint32) error {
-	if err := os.MkdirAll(path, 0o2770); err != nil {
+func (OS) EnsureGroupDir(path string, gid, perm uint32) error {
+	mode := fileMode(perm)
+	if err := os.MkdirAll(path, mode); err != nil {
 		return err
 	}
 	// Preserve the owner user; set the owning group.
@@ -73,7 +77,21 @@ func (OS) EnsureGroupDir(path string, gid uint32) error {
 	}
 	// Re-apply mode explicitly: MkdirAll is subject to umask and MkdirAll does
 	// not set the setgid bit reliably on a pre-existing dir.
-	return os.Chmod(path, os.ModeSetgid|0o770)
+	return os.Chmod(path, mode)
+}
+
+// fileMode turns a perm word that folds setgid in as 0o2000 (the state/roster
+// convention) into an os.FileMode with os.ModeSetgid set. A zero perm defaults
+// to a private setgid group folder (0o2770).
+func fileMode(perm uint32) os.FileMode {
+	if perm == 0 {
+		perm = 0o2770
+	}
+	mode := os.FileMode(perm & 0o777)
+	if perm&0o2000 != 0 {
+		mode |= os.ModeSetgid
+	}
+	return mode
 }
 
 func (OS) EnsureHomeDir(path string, uid, gid uint32) error {

@@ -60,6 +60,15 @@ message Group {
   // which cannot split read from write within one group. Where the filesystem
   // cannot store ACLs, apply refuses. See roster.Group.Readers.
   repeated string readers = 5;
+
+  // Unauthenticated ("anonymous") web access to this group's folder. One of
+  // "none" (default, private 2770), "read" (world-readable 2775 — any roster
+  // user OR an anonymous web visitor may read), or "write" (fully public 2777
+  // — anyone may read and write). It opens only the folder's "other" mode bits;
+  // the SMB share stays `guest ok = no`, so the anonymous identity can never
+  // mount — anonymous access is web-only. Mutually exclusive with `readers`.
+  // See roster.Group.Anonymous.
+  string anonymous = 6;
 }
 
 // User is a managed SMB-only user (no interactive server login).

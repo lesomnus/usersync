@@ -315,6 +315,28 @@ func TestGroupFolderPermDrift(t *testing.T) {
 	}
 }
 
+func TestAnonymousFolderMode(t *testing.T) {
+	// An anonymous:read group wants 2775. A folder still at the private 2770 is
+	// drift and must heal to CreateGroup carrying the wider mode; a folder already
+	// at 2775 is a no-op.
+	d := &roster.Roster{Groups: []roster.Group{{Name: "pub", GID: 7001, Anonymous: roster.AnonRead}}}
+
+	s := state.New()
+	s.Groups["pub"] = state.Group{Name: "pub", GID: 7001, FolderExists: true, FolderPerm: 0o2770, FolderGID: 7001}
+	got := Reconcile(d, s, cls())
+	if len(got) != 1 || got[0].Kind != CreateGroup {
+		t.Fatalf("anonymous level raises desired mode => CreateGroup heal, got %v", kinds(got))
+	}
+	if got[0].DirPerm != 0o2775 {
+		t.Fatalf("CreateGroup must carry the anonymous mode 2775, got %04o", got[0].DirPerm)
+	}
+
+	s.Groups["pub"] = state.Group{Name: "pub", GID: 7001, FolderExists: true, FolderPerm: 0o2775, FolderGID: 7001}
+	if got := Reconcile(d, s, cls()); len(got) != 0 {
+		t.Fatalf("folder already at 2775 => no-op, got %v", kinds(got))
+	}
+}
+
 func TestPreservesNonManagedGroups(t *testing.T) {
 	// skim is in team-a (managed) and docker (non-managed, preserved). A managed
 	// group change must NOT strip docker.

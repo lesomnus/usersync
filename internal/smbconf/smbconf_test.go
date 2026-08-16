@@ -93,6 +93,38 @@ func TestAnonymousShares(t *testing.T) {
 	}
 }
 
+// A reader group joins a private team share read-only: it is added to `valid
+// users` so smbd lets it connect, and to `read list` so smbd refuses its writes
+// — the team itself stays writable. Anonymous shares cannot carry readers
+// (roster load rejects that combination), so this is the private form only.
+func TestRenderReaders(t *testing.T) {
+	gs := []roster.Group{
+		{Name: "sim", GID: 10001, Readers: []string{"sim-readers", "aux-readers"}},
+		{Name: "sim-readers", GID: 10002},
+		{Name: "aux-readers", GID: 10003},
+	}
+	secs := sections(Render(gs, "/h", "/g"))
+
+	sim := secs["sim"]
+	// Team first, then reader groups sorted for a stable config.
+	if got := sim["valid users"]; got != "@sim @aux-readers @sim-readers" {
+		t.Errorf("valid users = %q; want the team plus sorted reader groups", got)
+	}
+	if got := sim["read list"]; got != "@aux-readers @sim-readers" {
+		t.Errorf("read list = %q; want the reader groups (sorted)", got)
+	}
+	if sim["read only"] != "no" {
+		t.Errorf("team share must stay writable for the team (read only = no), got %q", sim["read only"])
+	}
+	// A reader group's OWN share is an ordinary private team, no read list.
+	if vu := secs["sim-readers"]["valid users"]; vu != "@sim-readers" {
+		t.Errorf("reader group's own share stays @sim-readers, got %q", vu)
+	}
+	if _, ok := secs["sim-readers"]["read list"]; ok {
+		t.Error("a team with no readers must not emit a read list")
+	}
+}
+
 // reason about the emitted directives rather than string-matching them.
 func sections(block string) map[string]map[string]string {
 	out := map[string]map[string]string{}

@@ -1,8 +1,11 @@
 package fsops
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +93,46 @@ func TestEnsureAndReadReaderACL(t *testing.T) {
 	}
 	if gids, _ := fs.ReadReaderGIDs(dir); len(gids) != 0 {
 		t.Fatalf("after clearing, readers = %v; want none", gids)
+	}
+}
+
+// A reader granted on a folder that ALREADY has files must be able to read those
+// files — the grant is retroactive, not only forward. A file created before the
+// reader existed gains the access entry, and a nested directory gains the default
+// entry so its future files inherit it too.
+func TestEnsureReaderACLIsRetroactive(t *testing.T) {
+	if _, err := exec.LookPath("setfacl"); err != nil {
+		t.Skip("setfacl not installed")
+	}
+	dir := t.TempDir()
+	pre := filepath.Join(dir, "old.txt")
+	if err := os.WriteFile(pre, []byte("x"), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o2770); err != nil {
+		t.Fatal(err)
+	}
+
+	fs := OS{}
+	if err := fs.EnsureReaderACL(dir, 0, []uint32{10011}); err != nil {
+		if err == ErrACLUnsupported {
+			t.Skip("filesystem has no ACL support")
+		}
+		t.Fatalf("EnsureReaderACL: %v", err)
+	}
+
+	// The pre-existing file gained the reader's ACCESS entry (readable now).
+	if out, err := exec.Command("getfacl", "-pnE", pre).Output(); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(string(out), "group:10011:") {
+		t.Fatalf("pre-existing file did not gain the reader access ACL:\n%s", out)
+	}
+	// The pre-existing subdirectory gained the reader's DEFAULT entry (its future
+	// files will inherit the grant).
+	if out, err := exec.Command("getfacl", "-pnE", sub).Output(); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(string(out), "default:group:10011:") {
+		t.Fatalf("pre-existing subdir did not gain the reader default ACL:\n%s", out)
 	}
 }

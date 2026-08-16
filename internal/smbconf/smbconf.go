@@ -78,7 +78,28 @@ func Render(groups []roster.Group, homeBase, groupsBase string) string {
 		case roster.AnonNone:
 			// Private team share: only members connect; the folder's mode does the
 			// rest. Non-members are turned away at the share, not just at the file.
-			fmt.Fprintf(&b, "   valid users = @%s\n", name)
+			if len(g.Readers) == 0 {
+				fmt.Fprintf(&b, "   valid users = @%s\n", name)
+			} else {
+				// Reader groups (roster.Group.Readers) mount read-only: they join
+				// `valid users` so smbd lets them connect at all, and `read list`
+				// forces them read-only even though the share is writable for the
+				// team. The folder's POSIX ACL — set by fsops for these same groups
+				// — is what actually grants the read at the filesystem; this is only
+				// the SMB gate that lets them reach it (web read needs no share
+				// change). Sorted so the config is stable regardless of roster order.
+				rs := append([]string(nil), g.Readers...)
+				sort.Strings(rs)
+				valid := "@" + name
+				var readList strings.Builder
+				for _, r := range rs {
+					rn := oneLine(r)
+					valid += " @" + rn
+					fmt.Fprintf(&readList, " @%s", rn)
+				}
+				fmt.Fprintf(&b, "   valid users = %s\n", valid)
+				fmt.Fprintf(&b, "   read list =%s\n", readList.String())
+			}
 		default:
 			// Anonymous (read or write): ANY roster user may mount and read, so the
 			// share is not gated to the team — the open "other" mode bits on the

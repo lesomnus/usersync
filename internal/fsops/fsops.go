@@ -7,8 +7,10 @@ package fsops
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,10 +45,11 @@ type FS interface {
 	// reconciler compares this against the roster's declared reader gids.
 	ReadReaderGIDs(path string) ([]uint32, error)
 	// EnsureReaderACL makes readerGIDs exactly the read-only groups on path, as
-	// both an access entry and a default entry (so files created afterwards
-	// inherit it), and removes any named-group ACL entry not in the set. The
-	// writer group keeps rwx via the base mode. Returns ErrACLUnsupported when
-	// the filesystem cannot store ACLs at all.
+	// an access entry on the whole existing tree (so files already there become
+	// readable — the grant is retroactive, not only forward) and a default entry
+	// on every directory (so files created afterwards inherit it). It removes any
+	// named-group ACL entry not in the set. The writer group keeps rwx via the
+	// base mode. Returns ErrACLUnsupported when the filesystem cannot store ACLs.
 	EnsureReaderACL(path string, writerGID uint32, readerGIDs []uint32) error
 }
 
@@ -169,33 +172,60 @@ func (OS) EnsureReaderACL(path string, writerGID uint32, readerGIDs []uint32) er
 		return err
 	}
 
-	// Start from a clean slate so a de-declared reader cannot survive. -k drops
-	// the default ACL, -b drops all extended access entries; the base
-	// owner/group/other remain, so the 2770 mode is untouched.
-	if _, err := run("setfacl", "-k", path); err != nil {
-		return fmt.Errorf("clear default ACL on %s: %w", path, err)
+	// Start from a clean slate, recursively, so a de-declared reader survives
+	// nowhere in the tree — not on the folder and not on anything already inside
+	// it. -k drops default ACLs (directories only), -b drops extended access
+	// entries (every file); the base owner/group/other remain, so the 2770 mode
+	// is untouched.
+	if _, err := run("setfacl", "-R", "-k", path); err != nil {
+		return fmt.Errorf("clear default ACLs under %s: %w", path, err)
 	}
-	if _, err := run("setfacl", "-b", path); err != nil {
-		return fmt.Errorf("clear access ACL on %s: %w", path, err)
+	if _, err := run("setfacl", "-R", "-b", path); err != nil {
+		return fmt.Errorf("clear access ACLs under %s: %w", path, err)
 	}
 	if len(readerGIDs) == 0 {
 		return nil
 	}
 
-	// The default entries make inheritance work: a file created afterwards — over
-	// the web or over SMB — is born with the reader's r-x already on it. The
-	// mask must permit r-x, and the writer group and owner keep rwx via default
-	// entries so inherited files stay writable by the team.
-	spec := []string{"m", "d:u::rwx", "d:g::rwx", "d:o::---"}
+	// Access ACL over the WHOLE existing tree — this is what makes a reader
+	// retroactive: files already in the folder (e.g. data copied in before the
+	// reader was declared, or files that predate a newly-added reader) become
+	// readable, not only ones created afterwards. `rX` grants read on files and
+	// enter (x) on directories and never marks a plain file executable; setfacl
+	// recomputes each object's mask as it goes, so the entry stays effective. The
+	// writer group keeps its rwx from the base 2770 mode, needing no entry.
+	access := make([]string, 0, len(readerGIDs))
 	for _, gid := range readerGIDs {
-		spec = append(spec,
-			fmt.Sprintf("g:%d:r-x", gid),   // access: read the folder
-			fmt.Sprintf("d:g:%d:r-x", gid), // default: and everything created in it
-		)
+		access = append(access, fmt.Sprintf("g:%d:rX", gid))
 	}
-	args := []string{"-" + spec[0], strings.Join(spec[1:], ","), path}
-	if _, err := run("setfacl", args...); err != nil {
-		return fmt.Errorf("set reader ACL on %s: %w", path, err)
+	if _, err := run("setfacl", "-R", "-m", strings.Join(access, ","), path); err != nil {
+		return fmt.Errorf("set reader access ACL under %s: %w", path, err)
+	}
+
+	// Default ACL for inheritance, on every directory in the tree, so a file
+	// created later — anywhere beneath, over the web or over SMB — is born with
+	// the reader's r-x already on it. Default ACLs live on directories only, so
+	// this walks the directories instead of recursing blindly: `setfacl -R` with
+	// a default (d:) entry would error on the first plain file it met. Owner and
+	// writer group keep rwx in the default so inherited files stay team-writable.
+	def := []string{"d:u::rwx", "d:g::rwx", "d:o::---"}
+	for _, gid := range readerGIDs {
+		def = append(def, fmt.Sprintf("d:g:%d:r-x", gid))
+	}
+	defSpec := strings.Join(def, ",")
+	if err := filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if _, err := run("setfacl", "-m", defSpec, p); err != nil {
+			return fmt.Errorf("set default ACL on %s: %w", p, err)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("set default ACLs under %s: %w", path, err)
 	}
 	return nil
 }

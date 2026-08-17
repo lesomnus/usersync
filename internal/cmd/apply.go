@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/lesomnus/usersync/internal/executor"
 	"github.com/lesomnus/usersync/internal/fsops"
+	"github.com/lesomnus/usersync/internal/quota"
 	"github.com/lesomnus/usersync/internal/reconcile"
 	"github.com/lesomnus/usersync/internal/report"
 	"github.com/lesomnus/usersync/internal/run"
@@ -54,10 +56,24 @@ func NewCmdApply() *xli.Command {
 			if err != nil {
 				return err
 			}
+			qc, err := quotaController(c, runner)
+			if err != nil {
+				return err
+			}
+			// Pre-flight the quota backend. Unlike a read-only collect (which
+			// degrades a broken backend to a warning), apply REFUSES when a
+			// configured backend cannot enforce: a declared quota that silently goes
+			// unset is the same "looks restricted but is not" hazard the reader ACL
+			// refuses on. ErrUnsupported (no backend configured) is fine.
+			if err := qc.Probe(ctx); err != nil && !errors.Is(err, quota.ErrUnsupported) {
+				return fmt.Errorf("refusing to apply: quota backend configured but unavailable (set quota.backend: none to disable enforcement): %w", err)
+			}
 			actual, err := executor.Collect(ctx, p, s, cls, executor.CollectOpts{
 				HomeBase:   c.Paths.Home,
 				GroupsBase: c.Paths.Groups,
 				FS:         fsops.OS{},
+				Quota:      qc,
+				Warn:       errW(cmd),
 			})
 			if err != nil {
 				return err
@@ -80,6 +96,7 @@ func NewCmdApply() *xli.Command {
 				Samba:      s,
 				Deriver:    der,
 				FS:         fsops.OS{},
+				Quota:      qc,
 				HomeBase:   c.Paths.Home,
 				GroupsBase: c.Paths.Groups,
 			}

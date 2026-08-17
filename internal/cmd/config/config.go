@@ -43,6 +43,17 @@ type ProtectConfig struct {
 	GID         []Range `yaml:"gid"`
 }
 
+// QuotaConfig selects the per-uid disk-quota backend. Absent (or "none") means
+// declared `quota:` fields in the roster are recorded but not enforced. "zfs"
+// enforces them via the native `userquota@<uid>` property on Dataset — the
+// dataset the managed store lives on (e.g. "tank/nas"). It is opt-in because it
+// needs the zfs tool and /dev/zfs in usersync's runtime, which not every host
+// has; where it is off, a declared quota is a documented intent, not a control.
+type QuotaConfig struct {
+	Backend string `yaml:"backend"`
+	Dataset string `yaml:"dataset"`
+}
+
 // Config is the operational configuration (usersync.yaml). The roster (desired
 // state) lives separately in roster.yaml.
 type Config struct {
@@ -67,6 +78,8 @@ type Config struct {
 	OnOutOfScope string `yaml:"on_out_of_scope"`
 	SeedFile     string `yaml:"seed_file"`
 	Provider     string `yaml:"provider"`
+
+	Quota QuotaConfig `yaml:"quota"`
 
 	Otel OtelConfig `yaml:"otel"`
 }
@@ -115,6 +128,7 @@ func (c *Config) Evaluate() error {
 	z.FallbackP(&c.OnOutOfScope, "error")
 	z.FallbackP(&c.SeedFile, "./seed.secret")
 	z.FallbackP(&c.Provider, "auto")
+	z.FallbackP(&c.Quota.Backend, "none")
 	return nil
 }
 
@@ -208,6 +222,15 @@ func (c *Config) Validate() error {
 	case "", "auto", "shadow-utils", "shadowutils", "busybox", "pw":
 	default:
 		return fmt.Errorf("invalid provider %q (want auto|shadow-utils|busybox|pw)", c.Provider)
+	}
+	switch c.Quota.Backend {
+	case "", "none":
+	case "zfs":
+		if strings.TrimSpace(c.Quota.Dataset) == "" {
+			return fmt.Errorf("quota.backend %q requires quota.dataset (the dataset the managed store lives on, e.g. tank/nas)", c.Quota.Backend)
+		}
+	default:
+		return fmt.Errorf("invalid quota.backend %q (want none|zfs)", c.Quota.Backend)
 	}
 	return nil
 }

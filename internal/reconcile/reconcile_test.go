@@ -633,6 +633,80 @@ func TestReadersDriftWhenRosterNarrows(t *testing.T) {
 	}
 }
 
+func sz(n uint64) *roster.Size { s := roster.Size(n); return &s }
+
+// findKind returns the first action of kind k, or nil.
+func findKind(as []Action, k Kind) *Action {
+	for i := range as {
+		if as[i].Kind == k {
+			return &as[i]
+		}
+	}
+	return nil
+}
+
+// Quota actions are only proposed when a backend is enforcing; the declared value
+// rides on the action, a declared 0 does not re-drift against its 1-byte
+// enforcement, and removing a quota clears it.
+func TestQuotaReconcile(t *testing.T) {
+	no := false
+	// Not enforcing: even a declared quota proposes nothing.
+	d := &roster.Roster{Users: []roster.User{{Name: "intern", UID: 3067, Home: &no, Quota: sz(0)}}}
+	s := state.New() // QuotaEnforced=false
+	s.Users["intern"] = state.User{Name: "intern", UID: 3067}
+	if a := findKind(Reconcile(d, s, cls()), SetUserQuota); a != nil {
+		t.Fatal("no quota action when backend is not enforcing")
+	}
+
+	// Enforcing, intern absent: create + SetUserQuota carrying the DECLARED 0,
+	// ordered after the CreateUser (the account must exist first).
+	s = state.New()
+	s.QuotaEnforced = true
+	got := Reconcile(d, s, cls())
+	q := findKind(got, SetUserQuota)
+	if q == nil {
+		t.Fatalf("want SetUserQuota, got %v", kinds(got))
+	}
+	if q.QuotaBytes != 0 {
+		t.Errorf("SetUserQuota carries declared %d, want 0", q.QuotaBytes)
+	}
+	ci, qi := -1, -1
+	for i, a := range got {
+		if a.Kind == CreateUser && a.Name == "intern" {
+			ci = i
+		}
+		if a.Kind == SetUserQuota && a.Name == "intern" {
+			qi = i
+		}
+	}
+	if ci < 0 || qi < ci {
+		t.Errorf("SetUserQuota(%d) must follow CreateUser(%d)", qi, ci)
+	}
+
+	// Present with the 1-byte enforcement already in place: a declared 0 is steady.
+	s = activeState(state.User{Name: "intern", UID: 3067, Quota: 1}, true)
+	s.QuotaEnforced = true
+	if a := findKind(Reconcile(d, s, cls()), SetUserQuota); a != nil {
+		t.Errorf("declared 0 vs enforced 1 byte must not re-drift, got %+v", a)
+	}
+
+	// Quota removed from the roster but still enforced: ClearUserQuota.
+	d2 := &roster.Roster{Users: []roster.User{{Name: "u", UID: 3001}}}
+	s = activeState(state.User{Name: "u", UID: 3001, Quota: 100}, true)
+	s.QuotaEnforced = true
+	if a := findKind(Reconcile(d2, s, cls()), ClearUserQuota); a == nil {
+		t.Errorf("want ClearUserQuota when roster drops a quota still in force")
+	}
+
+	// A real cap already matching: steady.
+	d3 := &roster.Roster{Users: []roster.User{{Name: "u", UID: 3001, Quota: sz(100)}}}
+	s = activeState(state.User{Name: "u", UID: 3001, Quota: 100}, true)
+	s.QuotaEnforced = true
+	if a := findKind(Reconcile(d3, s, cls()), SetUserQuota); a != nil {
+		t.Errorf("matching quota must not drift, got %+v", a)
+	}
+}
+
 // A `home: false` user is created without a home, and a present one never drifts
 // even when no home directory exists.
 func TestHomeFalse(t *testing.T) {

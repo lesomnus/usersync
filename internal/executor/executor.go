@@ -14,6 +14,7 @@ import (
 	"github.com/lesomnus/usersync/internal/fsops"
 	"github.com/lesomnus/usersync/internal/idrange"
 	"github.com/lesomnus/usersync/internal/provider"
+	"github.com/lesomnus/usersync/internal/quota"
 	"github.com/lesomnus/usersync/internal/reconcile"
 	"github.com/lesomnus/usersync/internal/samba"
 	"github.com/lesomnus/usersync/internal/secret"
@@ -34,6 +35,13 @@ type CollectOpts struct {
 	// warning to Warn instead of a fatal error. Read-only commands set this.
 	SmbOptional bool
 	Warn        io.Writer
+	// Quota, if set, reads each managed user's enforced byte limit into state so
+	// the reconciler can heal quota drift. A backend that reports ErrUnsupported
+	// (the Nop default) leaves State.QuotaEnforced false and quotas untouched; a
+	// configured backend that fails to probe is downgraded to a warning here so a
+	// read-only command never breaks on it — apply pre-flights the probe itself
+	// and refuses, which is where an unenforceable quota must be loud.
+	Quota quota.Controller
 }
 
 // Collect gathers the actual State from the account and SMB backends, filtered
@@ -109,6 +117,33 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 	for name, a := range accts {
 		out.Smb[name] = state.Smb{Name: a.Name, Enabled: a.Enabled}
 	}
+	if opts.Quota != nil {
+		switch err := opts.Quota.Probe(ctx); {
+		case err == nil:
+			limits, lerr := opts.Quota.List(ctx)
+			if lerr != nil {
+				if opts.Warn != nil {
+					fmt.Fprintf(opts.Warn, "warning: reading quotas: %v\n", lerr)
+				}
+				break
+			}
+			out.QuotaEnforced = true
+			for name, u := range out.Users {
+				if q, ok := limits[u.UID]; ok {
+					u.Quota = q
+					out.Users[name] = u
+				}
+			}
+		case errors.Is(err, quota.ErrUnsupported):
+			// No quota backend configured: leave quotas alone.
+		default:
+			// A configured backend that will not probe. Not fatal for a read-only
+			// collect (apply refuses separately); note it and move on unenforced.
+			if opts.Warn != nil {
+				fmt.Fprintf(opts.Warn, "warning: quota backend unavailable, quotas not reconciled: %v\n", err)
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -118,6 +153,7 @@ type Deps struct {
 	Samba      samba.Samba
 	Deriver    *secret.Deriver // required for actions that create SMB accounts
 	FS         fsops.FS
+	Quota      quota.Controller // required for SetUserQuota / ClearUserQuota actions
 	HomeBase   string
 	GroupsBase string
 	Shell      string // defaults to DefaultShell if empty
@@ -184,6 +220,18 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 
 	case reconcile.EnsureHome:
 		return d.FS.EnsureHomeDir(filepath.Join(d.HomeBase, a.Name), a.UID, a.UID)
+
+	case reconcile.SetUserQuota:
+		if d.Quota == nil {
+			return fmt.Errorf("no quota backend configured")
+		}
+		return d.Quota.Set(ctx, a.UID, a.QuotaBytes)
+
+	case reconcile.ClearUserQuota:
+		if d.Quota == nil {
+			return fmt.Errorf("no quota backend configured")
+		}
+		return d.Quota.Clear(ctx, a.UID)
 
 	case reconcile.AddSmb:
 		pw, err := d.initPW(a.Name)

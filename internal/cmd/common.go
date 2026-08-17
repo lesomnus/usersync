@@ -14,6 +14,7 @@ import (
 	"github.com/lesomnus/usersync/internal/fsops"
 	"github.com/lesomnus/usersync/internal/idrange"
 	"github.com/lesomnus/usersync/internal/provider"
+	"github.com/lesomnus/usersync/internal/quota"
 	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/usersync/internal/samba"
@@ -107,6 +108,23 @@ func backends(c *config.Config, r run.Runner) (provider.Provider, samba.Samba, e
 		return nil, nil, err
 	}
 	return p, samba.New(r), nil
+}
+
+// quotaController builds the per-uid quota backend from the config over the given
+// runner. "none" (the default) yields a Nop that enforces nothing; "zfs" yields a
+// backend that sets `userquota@<uid>` on the configured dataset. Validate has
+// already rejected an unknown backend or a zfs backend with no dataset, so the
+// default arm is unreachable in practice — it stays a real error, not a silent
+// Nop, so a future backend added to Validate but not here fails loudly.
+func quotaController(c *config.Config, r run.Runner) (quota.Controller, error) {
+	switch c.Quota.Backend {
+	case "", "none":
+		return quota.Nop{}, nil
+	case "zfs":
+		return quota.ZFS{Runner: r, Dataset: c.Quota.Dataset}, nil
+	default:
+		return nil, fmt.Errorf("unknown quota backend %q", c.Quota.Backend)
+	}
 }
 
 // deriver loads the seed and builds a password deriver.
@@ -247,11 +265,16 @@ func dryDeps(c *config.Config, w io.Writer) (executor.Deps, error) {
 	if err != nil {
 		return executor.Deps{}, err
 	}
+	qc, err := quotaController(c, r)
+	if err != nil {
+		return executor.Deps{}, err
+	}
 	return executor.Deps{
 		Provider:   p,
 		Samba:      s,
 		Deriver:    secret.New([]byte("preview")),
 		FS:         printFS{w: w},
+		Quota:      qc,
 		HomeBase:   c.Paths.Home,
 		GroupsBase: c.Paths.Groups,
 	}, nil
@@ -265,11 +288,16 @@ func collectActual(ctx context.Context, c *config.Config, r run.Runner, cls *idr
 	if err != nil {
 		return nil, err
 	}
+	qc, err := quotaController(c, r)
+	if err != nil {
+		return nil, err
+	}
 	return executor.Collect(ctx, p, s, cls, executor.CollectOpts{
 		HomeBase:    c.Paths.Home,
 		GroupsBase:  c.Paths.Groups,
 		FS:          fsops.OS{},
 		SmbOptional: smbOptional,
 		Warn:        warn,
+		Quota:       qc,
 	})
 }

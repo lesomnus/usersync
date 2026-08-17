@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/lesomnus/usersync/internal/idrange"
+	"github.com/lesomnus/usersync/internal/quota"
 	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/usersync/internal/state"
 )
@@ -71,6 +72,45 @@ func homeDrifted(u roster.User, cur state.User) bool {
 	return !cur.HomeExists || cur.HomePerm != 0o700 || cur.HomeUID != u.UID || cur.HomeGID != u.UID
 }
 
+// quotaAction returns the quota step for a user, or nil if none is needed. It is
+// gated on actual.QuotaEnforced: with no working quota backend the reconciler
+// proposes nothing, so a declared quota simply is not acted on rather than
+// churning. A Reserved user has no account, so it is skipped. Comparison is in
+// ENFORCED space (quota.EnforceBytes), so a declared 0 reads back as its 1-byte
+// enforcement and does not re-drift every run. A new user has no state entry, so
+// cur is the zero value (Quota 0) and a declared quota becomes a SetUserQuota
+// that runs after the account is created (appended after reconcileUser's create).
+// refusedUser reports whether reconcileUser refused the account (uid mismatch or
+// a create-path collision), in which case no quota is proposed for it.
+func refusedUser(acts []Action) bool {
+	for _, a := range acts {
+		if a.Kind == RefuseUser {
+			return true
+		}
+	}
+	return false
+}
+
+func quotaAction(u roster.User, actual *state.State) *Action {
+	if !actual.QuotaEnforced || u.Status == roster.Reserved {
+		return nil
+	}
+	cur := actual.Users[u.Name]
+	if u.Quota == nil {
+		if cur.Quota != 0 {
+			return &Action{Kind: ClearUserQuota, Name: u.Name, UID: u.UID, Status: u.Status,
+				Reason: "quota removed from roster"}
+		}
+		return nil
+	}
+	want := quota.EnforceBytes(uint64(*u.Quota))
+	if cur.Quota != want {
+		return &Action{Kind: SetUserQuota, Name: u.Name, UID: u.UID, QuotaBytes: uint64(*u.Quota),
+			Status: u.Status, Reason: reasonf("enforce %d bytes", want)}
+	}
+	return nil
+}
+
 // folderDrifted reports whether a present group's folder is missing or has
 // drifted from the desired setgid mode (2770, or 2775/2777 when the group grants
 // anonymous read/write) owned by the group. Changing a group's `anonymous` level
@@ -98,6 +138,8 @@ const (
 	EnableUser         // SMB disabled but should be active: smbpasswd -e
 	DisableUser        // SMB active but should be off: smbpasswd -d
 	EnsureHome         // present user whose home directory is missing: (re)create it
+	SetUserQuota       // declared quota differs from what the fs enforces: set it
+	ClearUserQuota     // quota removed from roster but still enforced: clear it
 	RefuseUser         // uid mismatch or guard violation (manual)
 	OrphanUser         // managed user not in roster: auto-disable (home kept)
 	ReservedPresent    // reserved status but the account still exists: standing notice
@@ -153,6 +195,10 @@ func (k Kind) String() string {
 		return "disable-user"
 	case EnsureHome:
 		return "ensure-home"
+	case SetUserQuota:
+		return "set-user-quota"
+	case ClearUserQuota:
+		return "clear-user-quota"
 	case RefuseUser:
 		return "refuse-user"
 	case OrphanUser:
@@ -180,6 +226,7 @@ type Action struct {
 	Reason     string   // for refuse / orphan / status context
 	ReaderGIDs []uint32 // set-group-readers: the reader gids to enforce on the folder ACL
 	DirPerm    uint32   // create-group: the setgid folder mode to ensure (2770/2775/2777)
+	QuotaBytes uint64   // set-user-quota: the DECLARED byte limit (backend applies EnforceBytes)
 }
 
 // Reconcile computes the actions to converge actual to desired. The classifier
@@ -328,7 +375,16 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 	// --- users ---
 	for _, u := range desiredUsers {
 		u.Groups = userGroups[u.Name] // inverted from the groups' member lists
-		out = append(out, reconcileUser(u, actual, cls, uidOwner, gidOwner)...)
+		acts := reconcileUser(u, actual, cls, uidOwner, gidOwner)
+		out = append(out, acts...)
+		// Quota rides alongside the account actions, but not when the user was
+		// refused (uid mismatch / collision): there is no account to cap. It is
+		// appended last so a SetUserQuota lands after the CreateUser it belongs to.
+		if !refusedUser(acts) {
+			if qa := quotaAction(u, actual); qa != nil {
+				out = append(out, *qa)
+			}
+		}
 	}
 
 	// --- group administrators (after the users they name) ---

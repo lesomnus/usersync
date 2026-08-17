@@ -154,9 +154,10 @@ func glyph(k reconcile.Kind) string {
 	case reconcile.CreateGroup, reconcile.CreateUser, reconcile.CreateUserDisabled,
 		reconcile.AddSmb, reconcile.EnableUser, reconcile.EnsureHome:
 		return "+"
-	case reconcile.UpdateUserGroups, reconcile.SetGroupAdmins, reconcile.SetGroupReaders:
+	case reconcile.UpdateUserGroups, reconcile.SetGroupAdmins, reconcile.SetGroupReaders,
+		reconcile.SetUserQuota:
 		return "~"
-	case reconcile.DisableUser:
+	case reconcile.DisableUser, reconcile.ClearUserQuota:
 		return "-"
 	case reconcile.RefuseGroup, reconcile.RefuseUser:
 		return "!"
@@ -196,6 +197,9 @@ func details(a reconcile.Action) string {
 			gids[i] = fmt.Sprintf("%d", g)
 		}
 		parts = append(parts, "readers=["+strings.Join(gids, ",")+"]")
+	}
+	if a.Kind == reconcile.SetUserQuota {
+		parts = append(parts, fmt.Sprintf("quota=%d", a.QuotaBytes))
 	}
 	s := " " + strings.Join(parts, " ")
 	if a.Reason != "" {

@@ -21,6 +21,11 @@ type User struct {
 	HomePerm   uint32
 	HomeUID    uint32
 	HomeGID    uint32
+
+	// Quota is the per-uid byte limit the quota backend currently enforces on this
+	// account, 0 if none. It is only meaningful when State.QuotaEnforced is true;
+	// otherwise the reconciler leaves quotas untouched.
+	Quota uint64
 }
 
 // Group is an actual unix group within the managed range.
@@ -70,6 +75,12 @@ type State struct {
 	// Users/Groups maps hide), so a create never lands on someone else's account.
 	AllUsers  map[string]uint32
 	AllGroups map[string]uint32
+
+	// QuotaEnforced is true when a working quota backend was probed during Collect.
+	// The reconciler only proposes quota actions when it is set, so on a system
+	// with no quota backend (or one that is down) declared quotas are simply not
+	// acted on rather than churned.
+	QuotaEnforced bool
 }
 
 // New returns an empty State with initialized maps.

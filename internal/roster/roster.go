@@ -259,6 +259,15 @@ type User struct {
 	FullName string `yaml:"full_name,omitempty"`
 	Status   Status `yaml:"status,omitempty"`
 
+	// Home controls whether this user gets a personal home directory (and thus a
+	// personal `\\host\<name>` SMB share). Absent (nil) means yes — the default,
+	// what everyone has. `home: false` skips it: the account still exists, still
+	// has a passwd home PATH (useradd -d, needed by the tools) and still gets team
+	// access, but no directory is created there, so the [homes] share simply has
+	// nothing to serve them. For an account that is only ever a reader of a team
+	// (an intern, a contractor) a personal home is dead space.
+	Home *bool `yaml:"home,omitempty"`
+
 	// Groups is the user's supplementary groups, but it is NOT read from the
 	// roster (yaml:"-", so a stray `groups:` under a user is rejected by strict
 	// decode). Membership is declared on the group, in `groups[].members`;
@@ -266,6 +275,10 @@ type User struct {
 	// pipeline reads it here as before.
 	Groups []string `yaml:"-"`
 }
+
+// WantsHome reports whether this user should have a home directory. The default
+// (Home unset) is yes.
+func (u User) WantsHome() bool { return u.Home == nil || *u.Home }
 
 // Roster is the complete declared desired state.
 type Roster struct {

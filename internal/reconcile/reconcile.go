@@ -60,8 +60,14 @@ func resolveReaderGIDs(g roster.Group, gidOf map[string]uint32) []uint32 {
 }
 
 // homeDrifted reports whether a present user's home directory is missing or has
-// drifted from the desired 0700 owned by its UPG (uid == gid == UID).
+// drifted from the desired 0700 owned by its UPG (uid == gid == UID). A user who
+// declares `home: false` wants no directory, so it never drifts — a home left
+// behind from before is not removed (usersync never deletes data), it just stops
+// being maintained.
 func homeDrifted(u roster.User, cur state.User) bool {
+	if !u.WantsHome() {
+		return false
+	}
 	return !cur.HomeExists || cur.HomePerm != 0o700 || cur.HomeUID != u.UID || cur.HomeGID != u.UID
 }
 
@@ -170,6 +176,7 @@ type Action struct {
 	Groups     []string // desired supplementary groups (create / update)
 	Status     roster.Status
 	HasSmb     bool     // create*: an SMB account already exists — do not reset its password
+	Home       bool     // create*: create the home directory (false for a `home: false` user)
 	Reason     string   // for refuse / orphan / status context
 	ReaderGIDs []uint32 // set-group-readers: the reader gids to enforce on the folder ACL
 	DirPerm    uint32   // create-group: the setgid folder mode to ensure (2770/2775/2777)
@@ -420,7 +427,7 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier, 
 	case roster.Disabled:
 		if !present {
 			return []Action{{Kind: CreateUserDisabled, Name: u.Name, UID: u.UID, FullName: u.FullName,
-				Groups: u.Groups, Status: u.Status, HasSmb: hasSmb, Reason: "disabled"}}
+				Groups: u.Groups, Status: u.Status, HasSmb: hasSmb, Home: u.WantsHome(), Reason: "disabled"}}
 		}
 		var out []Action
 		if !sameGroupSet(u.Groups, cur.Groups) {
@@ -437,7 +444,7 @@ func reconcileUser(u roster.User, actual *state.State, cls *idrange.Classifier, 
 	default: // Active
 		if !present {
 			return []Action{{Kind: CreateUser, Name: u.Name, UID: u.UID, FullName: u.FullName,
-				Groups: u.Groups, Status: u.Status, HasSmb: hasSmb}}
+				Groups: u.Groups, Status: u.Status, HasSmb: hasSmb, Home: u.WantsHome()}}
 		}
 		var out []Action
 		if !sameGroupSet(u.Groups, cur.Groups) {

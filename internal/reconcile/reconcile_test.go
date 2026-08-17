@@ -632,3 +632,32 @@ func TestReadersDriftWhenRosterNarrows(t *testing.T) {
 		}
 	}
 }
+
+// A `home: false` user is created without a home, and a present one never drifts
+// even when no home directory exists.
+func TestHomeFalse(t *testing.T) {
+	no := false
+	d := &roster.Roster{Users: []roster.User{{Name: "intern", UID: 3067, Home: &no}}}
+
+	// Create: the CreateUser action must carry Home=false.
+	got := Reconcile(d, state.New(), cls())
+	var cu *Action
+	for i := range got {
+		if got[i].Kind == CreateUser && got[i].Name == "intern" {
+			cu = &got[i]
+		}
+	}
+	if cu == nil {
+		t.Fatalf("want CreateUser for intern, got %v", kinds(got))
+	}
+	if cu.Home {
+		t.Error("home: false user's CreateUser must have Home=false")
+	}
+
+	// Present but home dir absent: must NOT propose EnsureHome.
+	s := activeState(state.User{Name: "intern", UID: 3067}, true) // okHome not applied → home absent
+	s.Users["intern"] = state.User{Name: "intern", UID: 3067}     // HomeExists=false
+	if hasKind(Reconcile(d, s, cls()), EnsureHome) {
+		t.Error("home: false user must never drift into EnsureHome")
+	}
+}

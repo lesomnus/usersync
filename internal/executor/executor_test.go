@@ -128,7 +128,7 @@ func run(t *testing.T, actions ...reconcile.Action) []string {
 }
 
 func TestCreateUserSequence(t *testing.T) {
-	log := run(t, reconcile.Action{Kind: reconcile.CreateUser, Name: "skim", UID: 3001, FullName: "Sunghyun Kim", Groups: []string{"team-a"}})
+	log := run(t, reconcile.Action{Kind: reconcile.CreateUser, Name: "skim", UID: 3001, FullName: "Sunghyun Kim", Groups: []string{"team-a"}, Home: true})
 	want := []string{
 		"EnsureUser(skim,uid=3001,gid=3001,home=/research/home/skim,shell=/usr/sbin/nologin)",
 		"HomeDir(/research/home/skim,3001,3001)",
@@ -139,6 +139,19 @@ func TestCreateUserSequence(t *testing.T) {
 	}
 	if strings.Join(log, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("sequence mismatch:\n got %v\nwant %v", log, want)
+	}
+}
+
+// A `home: false` user (Home unset on the action) is created with an account and
+// SMB but NO home directory.
+func TestCreateUserWithoutHome(t *testing.T) {
+	log := run(t, reconcile.Action{Kind: reconcile.CreateUser, Name: "intern", UID: 3067, HasSmb: false})
+	joined := strings.Join(log, " ")
+	if strings.Contains(joined, "HomeDir(") {
+		t.Fatalf("home: false user must not create a home directory: %v", log)
+	}
+	if !strings.Contains(joined, "EnsureUser(intern") || !strings.Contains(joined, "SmbEnable(intern)") {
+		t.Fatalf("home: false user still gets an account and SMB: %v", log)
 	}
 }
 

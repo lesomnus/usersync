@@ -229,8 +229,13 @@ func (d Deps) createUser(ctx context.Context, a reconcile.Action, enable bool) e
 	if err := d.Provider.EnsureUser(ctx, spec); err != nil {
 		return err
 	}
-	if err := d.FS.EnsureHomeDir(home, a.UID, a.UID); err != nil {
-		return err
+	// A `home: false` user has a passwd home path (set by useradd -d above) but no
+	// directory: the account exists and gets team access, only its personal share
+	// has nothing to serve.
+	if a.Home {
+		if err := d.FS.EnsureHomeDir(home, a.UID, a.UID); err != nil {
+			return err
+		}
 	}
 	if err := d.Provider.SetSupplementaryGroups(ctx, a.Name, a.Groups); err != nil {
 		return err

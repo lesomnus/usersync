@@ -60,13 +60,19 @@ func NewCmdApply() *xli.Command {
 			if err != nil {
 				return err
 			}
-			// Pre-flight the quota backend. Unlike a read-only collect (which
-			// degrades a broken backend to a warning), apply REFUSES when a
-			// configured backend cannot enforce: a declared quota that silently goes
-			// unset is the same "looks restricted but is not" hazard the reader ACL
-			// refuses on. ErrUnsupported (no backend configured) is fine.
-			if err := qc.Probe(ctx); err != nil && !errors.Is(err, quota.ErrUnsupported) {
-				return fmt.Errorf("refusing to apply: quota backend configured but unavailable (set quota.backend: none to disable enforcement): %w", err)
+			// Pre-flight the quota backend. If a configured backend cannot enforce
+			// right now (e.g. zfs unreachable from this container), DEGRADE to no
+			// enforcement with a loud warning rather than failing the run: apply is
+			// on the boot path under `set -e`, and a quota that cannot be set must
+			// not take the whole server down with it — the same best-effort stance
+			// darak takes on this exact `zfs` call for usage accounting. The warning
+			// is the signal to fix the mount; accounts still reconcile meanwhile.
+			// ErrUnsupported (no backend configured) is the silent, expected case.
+			if err := qc.Probe(ctx); err != nil {
+				if !errors.Is(err, quota.ErrUnsupported) {
+					fmt.Fprintf(errW(cmd), "warning: quota backend unavailable, quotas NOT enforced this run: %v\n", err)
+				}
+				qc = quota.Nop{}
 			}
 			actual, err := executor.Collect(ctx, p, s, cls, executor.CollectOpts{
 				HomeBase:   c.Paths.Home,

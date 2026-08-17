@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/lesomnus/usersync/internal/idrange"
@@ -92,6 +93,44 @@ func TestIdempotentNoChange(t *testing.T) {
 	got := Reconcile(d, s, cls())
 	if len(got) != 0 {
 		t.Fatalf("steady state must yield 0 actions, got %v", kinds(got))
+	}
+}
+
+// A group declared `all: true` puts every ACTIVE user in it without the roster
+// listing the membership per user — a reserved account is left out.
+func TestAllGroupMembership(t *testing.T) {
+	d := &roster.Roster{
+		Groups: []roster.Group{
+			{Name: "everyone", GID: 7001, All: true},
+			{Name: "team-a", GID: 7002},
+		},
+		Users: []roster.User{
+			{Name: "jlee", UID: 3001, Groups: []string{"team-a"}},
+			{Name: "gone", UID: 3002, Status: roster.Reserved},
+		},
+	}
+	s := state.New()
+	s.Groups["everyone"] = okFolder(state.Group{Name: "everyone", GID: 7001})
+	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7002})
+	s.Users["jlee"] = okHome(state.User{Name: "jlee", UID: 3001, Groups: []string{"team-a"}}) // missing everyone
+	s.Smb["jlee"] = state.Smb{Name: "jlee", Enabled: true}
+
+	got := Reconcile(d, s, cls())
+
+	var jlee *Action
+	for i := range got {
+		if got[i].Kind == UpdateUserGroups && got[i].Name == "jlee" {
+			jlee = &got[i]
+		}
+		if got[i].Name == "gone" && got[i].Kind == UpdateUserGroups && slices.Contains(got[i].Groups, "everyone") {
+			t.Error("a reserved user was pulled into the all group")
+		}
+	}
+	if jlee == nil {
+		t.Fatalf("want an UpdateUserGroups for jlee, got %v", kinds(got))
+	}
+	if !slices.Contains(jlee.Groups, "everyone") || !slices.Contains(jlee.Groups, "team-a") {
+		t.Fatalf("jlee groups = %v, want to include both everyone and team-a", jlee.Groups)
 	}
 }
 

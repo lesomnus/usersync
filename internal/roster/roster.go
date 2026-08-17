@@ -223,6 +223,24 @@ type Group struct {
 	// exclusive (load.go): a read-only reader is meaningless on a folder already
 	// open to the world.
 	Anonymous Anonymous `yaml:"anonymous,omitempty"`
+
+	// All, when true, makes this group contain EVERY active managed user, without
+	// listing each in `users[].groups`. usersync maintains the membership: an
+	// account added to the roster joins automatically, one disabled or reserved
+	// leaves. It is the counterpart of Anonymous, on the other side of the
+	// anonymous line — where Anonymous opens the folder's "other" bits to the
+	// world (the nobody identity included), an `all` group is a real POSIX group
+	// nobody is in, so used as a reader it grants read to every signed-in user and
+	// to no anonymous visitor. That distinction cannot be a mode bit (there is no
+	// "other except nobody"), which is why it is a group.
+	//
+	// The point is to name "everyone" once. `readers: [staff]` on any folder, with
+	// staff declared `all: true`, is read for all registered users with no
+	// per-user upkeep — the tedious alternative being to add the group to all of
+	// them by hand and to remember every new hire. The group is otherwise ordinary
+	// (it has a gid and a folder of its own), so its folder doubles as a
+	// company-wide shared space, or is simply left unused.
+	All bool `yaml:"all,omitempty"`
 }
 
 // User is a managed SMB-only user.

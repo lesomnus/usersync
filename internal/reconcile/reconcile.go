@@ -292,8 +292,24 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		// present, gid matches, folder correct, owners agree, readers agree => no-op.
 	}
 
+	// Groups declared `all: true` contain every active user without listing each
+	// in the roster: their membership is maintained here by adding the group to
+	// each active user's supplementary set, so a user's usermod -G carries it and
+	// the ordinary reader/ACL machinery treats them like any other member. A
+	// reserved or disabled account is left out — an `all` group is "everyone who
+	// can sign in", and its whole use is being read by all of them.
+	var allGroups []string
+	for _, g := range desiredGroups {
+		if g.All {
+			allGroups = append(allGroups, g.Name)
+		}
+	}
+
 	// --- users ---
 	for _, u := range desiredUsers {
+		if len(allGroups) > 0 && u.Status == roster.Active {
+			u.Groups = append(append([]string(nil), u.Groups...), allGroups...)
+		}
 		out = append(out, reconcileUser(u, actual, cls, uidOwner, gidOwner)...)
 	}
 

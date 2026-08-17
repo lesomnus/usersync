@@ -31,7 +31,7 @@ func TestConcurrentEditsDoNotLoseOneAnother(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if _, err := d.AddGroup(user, group); err != nil {
+			if _, err := d.AddMember(group, user); err != nil {
 				return err
 			}
 			// A pause inside the critical section: without the lock this is what
@@ -69,22 +69,22 @@ func TestConcurrentEditsDoNotLoseOneAnother(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ user, want string }{
+	for _, tc := range []struct{ user, group string }{
 		{"ychoi", "team-b"},
 		{"park", "team-a"},
 	} {
-		got, err := d.Groups(tc.user)
+		got, err := d.Members(tc.group)
 		if err != nil {
 			t.Fatal(err)
 		}
 		found := false
-		for _, g := range got {
-			if g == tc.want {
+		for _, m := range got {
+			if m == tc.user {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("%s groups = %v, want it to contain %q -- this edit was lost", tc.user, got, tc.want)
+			t.Errorf("%s not in %s members = %v -- this edit was lost", tc.user, tc.group, got)
 		}
 	}
 }

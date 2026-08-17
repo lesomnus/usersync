@@ -44,8 +44,9 @@ var ErrNotEditable = errors.New("roster: cannot edit this file safely")
 // Document is a parsed roster that can be edited and printed back.
 type Document struct {
 	file *ast.File
-	// users is the sequence node under the top-level `users:` key.
-	users *ast.SequenceNode
+	// groups is the sequence node under the top-level `groups:` key, where
+	// membership is declared and edited (`groups[].members`).
+	groups *ast.SequenceNode
 }
 
 // ParseDocument parses YAML while retaining comments and layout.
@@ -64,17 +65,17 @@ func ParseDocument(src []byte) (*Document, error) {
 
 	d := &Document{file: f}
 	for _, kv := range body.Values {
-		if kv.Key.GetToken().Value != "users" {
+		if kv.Key.GetToken().Value != "groups" {
 			continue
 		}
 		seq, ok := kv.Value.(*ast.SequenceNode)
 		if !ok {
-			return nil, fmt.Errorf("%w: `users` is not a sequence", ErrNotEditable)
+			return nil, fmt.Errorf("%w: `groups` is not a sequence", ErrNotEditable)
 		}
-		d.users = seq
+		d.groups = seq
 	}
-	if d.users == nil {
-		return nil, fmt.Errorf("%w: no `users` sequence", ErrNotEditable)
+	if d.groups == nil {
+		return nil, fmt.Errorf("%w: no `groups` sequence", ErrNotEditable)
 	}
 	return d, nil
 }
@@ -82,9 +83,9 @@ func ParseDocument(src []byte) (*Document, error) {
 // String prints the document.
 func (d *Document) String() string { return d.file.String() }
 
-// userNode finds the mapping for one user by name.
-func (d *Document) userNode(name string) (*ast.MappingNode, error) {
-	for _, entry := range d.users.Values {
+// groupNode finds the mapping for one group by name.
+func (d *Document) groupNode(name string) (*ast.MappingNode, error) {
+	for _, entry := range d.groups.Values {
 		m, ok := entry.(*ast.MappingNode)
 		if !ok {
 			continue
@@ -95,30 +96,30 @@ func (d *Document) userNode(name string) (*ast.MappingNode, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("%w: %q", ErrNoSuchUser, name)
+	return nil, fmt.Errorf("%w: %q", ErrNoSuchGroup, name)
 }
 
-// Groups reads a user's declared supplementary groups.
-func (d *Document) Groups(user string) ([]string, error) {
-	m, err := d.userNode(user)
+// Members reads a group's declared members.
+func (d *Document) Members(group string) ([]string, error) {
+	m, err := d.groupNode(group)
 	if err != nil {
 		return nil, err
 	}
-	_, values, err := groupsOf(m)
+	_, values, err := membersOf(m)
 	return values, err
 }
 
-// groupsOf returns the `groups:` key/value pair and the names in it. A user with
-// no `groups:` key has none, which is not an error — it is how a home-only user
-// is written.
-func groupsOf(m *ast.MappingNode) (*ast.MappingValueNode, []string, error) {
+// membersOf returns the `members:` key/value pair and the names in it. A group
+// with no `members:` key has none, which is not an error — it is how an empty
+// team (or an `all: true` group) is written.
+func membersOf(m *ast.MappingNode) (*ast.MappingValueNode, []string, error) {
 	for _, kv := range m.Values {
-		if kv.Key.GetToken().Value != "groups" {
+		if kv.Key.GetToken().Value != "members" {
 			continue
 		}
 		seq, ok := kv.Value.(*ast.SequenceNode)
 		if !ok {
-			return nil, nil, fmt.Errorf("%w: `groups` is not a sequence", ErrNotEditable)
+			return nil, nil, fmt.Errorf("%w: `members` is not a sequence", ErrNotEditable)
 		}
 		names := make([]string, 0, len(seq.Values))
 		for _, v := range seq.Values {
@@ -129,38 +130,38 @@ func groupsOf(m *ast.MappingNode) (*ast.MappingValueNode, []string, error) {
 	return nil, nil, nil
 }
 
-// SetGroups replaces a user's supplementary group list.
+// SetMembers replaces a group's member list.
 //
 // The rendered style follows what is already there: a flow sequence stays a flow
-// sequence. That is not cosmetic — the shipped roster and both guides write
-// `groups: [team-a]`, and silently converting it to a block sequence on the
-// first membership change is the kind of churn this whole file exists to avoid.
+// sequence. That is not cosmetic — the roster is written `members: [alice, bob]`
+// and silently converting it to a block sequence on the first membership change
+// is the kind of churn this whole file exists to avoid.
 //
-// A user with no `groups:` key gets one appended after the last key, which is
+// A group with no `members:` key gets one appended after the last key, which is
 // where a person would have put it.
-func (d *Document) SetGroups(user string, groups []string) error {
-	m, err := d.userNode(user)
+func (d *Document) SetMembers(group string, members []string) error {
+	m, err := d.groupNode(group)
 	if err != nil {
 		return err
 	}
-	kv, _, err := groupsOf(m)
+	kv, _, err := membersOf(m)
 	if err != nil {
 		return err
 	}
 
-	if len(groups) == 0 && kv != nil {
-		// Drop the key entirely rather than leaving `groups: []`. An empty list
-		// and an absent key mean the same thing to the reconciler, and the
-		// absent key is what a hand-written home-only user looks like.
+	if len(members) == 0 && kv != nil {
+		// Drop the key entirely rather than leaving `members: []`. An empty list
+		// and an absent key mean the same thing to the reconciler, and the absent
+		// key is what a hand-written empty team looks like.
 		m.Values = slices.DeleteFunc(m.Values, func(v *ast.MappingValueNode) bool { return v == kv })
 		return nil
 	}
-	if len(groups) == 0 {
+	if len(members) == 0 {
 		return nil
 	}
 
 	if kv == nil {
-		node, err := newGroupsPair(m, groups, true)
+		node, err := newMembersPair(m, members, true)
 		if err != nil {
 			return err
 		}
@@ -170,9 +171,9 @@ func (d *Document) SetGroups(user string, groups []string) error {
 
 	seq := kv.Value.(*ast.SequenceNode)
 	flow := seq.IsFlowStyle
-	values := make([]ast.Node, 0, len(groups))
-	for _, g := range groups {
-		v, err := stringNode(g, seq.GetToken())
+	values := make([]ast.Node, 0, len(members))
+	for _, name := range members {
+		v, err := stringNode(name, seq.GetToken())
 		if err != nil {
 			return err
 		}
@@ -183,50 +184,50 @@ func (d *Document) SetGroups(user string, groups []string) error {
 	return nil
 }
 
-// AddGroup adds a user to a group, idempotently.
-func (d *Document) AddGroup(user, group string) (changed bool, err error) {
-	have, err := d.Groups(user)
+// AddMember adds a user to a group, idempotently.
+func (d *Document) AddMember(group, user string) (changed bool, err error) {
+	have, err := d.Members(group)
 	if err != nil {
 		return false, err
 	}
-	if slices.Contains(have, group) {
+	if slices.Contains(have, user) {
 		return false, nil
 	}
-	next := append(slices.Clone(have), group)
+	next := append(slices.Clone(have), user)
 	slices.Sort(next)
-	return true, d.SetGroups(user, next)
+	return true, d.SetMembers(group, next)
 }
 
-// RemoveGroup removes a user from a group, idempotently.
-func (d *Document) RemoveGroup(user, group string) (changed bool, err error) {
-	have, err := d.Groups(user)
+// RemoveMember removes a user from a group, idempotently.
+func (d *Document) RemoveMember(group, user string) (changed bool, err error) {
+	have, err := d.Members(group)
 	if err != nil {
 		return false, err
 	}
-	if !slices.Contains(have, group) {
+	if !slices.Contains(have, user) {
 		return false, nil
 	}
-	next := slices.DeleteFunc(slices.Clone(have), func(g string) bool { return g == group })
-	return true, d.SetGroups(user, next)
+	next := slices.DeleteFunc(slices.Clone(have), func(u string) bool { return u == user })
+	return true, d.SetMembers(group, next)
 }
 
-// newGroupsPair builds a `groups: [a, b]` mapping value to append to a user.
-func newGroupsPair(m *ast.MappingNode, groups []string, flow bool) (*ast.MappingValueNode, error) {
+// newMembersPair builds a `members: [a, b]` mapping value to append to a group.
+func newMembersPair(m *ast.MappingNode, members []string, flow bool) (*ast.MappingValueNode, error) {
 	if len(m.Values) == 0 {
-		return nil, fmt.Errorf("%w: user entry has no keys", ErrNotEditable)
+		return nil, fmt.Errorf("%w: group entry has no keys", ErrNotEditable)
 	}
 	// Borrow position from the entry's last key so the new line is indented with
 	// its siblings rather than at column zero.
 	anchor := m.Values[len(m.Values)-1]
 	tk := anchor.Key.GetToken()
 
-	key, err := stringNode("groups", tk)
+	key, err := stringNode("members", tk)
 	if err != nil {
 		return nil, err
 	}
 	seq := ast.Sequence(tokenAt(tk, "["), flow)
-	for _, g := range groups {
-		v, err := stringNode(g, tk)
+	for _, name := range members {
+		v, err := stringNode(name, tk)
 		if err != nil {
 			return nil, err
 		}

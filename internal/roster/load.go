@@ -206,6 +206,29 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 		}
 	}
 
+	// Members name users this roster declares. A member who is not would be pushed
+	// into usermod -G for a name the system cannot resolve — so a name that does
+	// not exist is a refusal to load, exactly as an undeclared owner is. An `all`
+	// group IS every user, so listing members on it is a contradiction, not a
+	// refinement.
+	for _, g := range ro.Groups {
+		if g.All && len(g.Members) > 0 {
+			errs = append(errs, fmt.Errorf("group %q is `all: true` (every active user) and also lists members — remove the members list", g.Name))
+		}
+		seenMember := map[string]bool{}
+		for _, m := range g.Members {
+			switch {
+			case !validName(m):
+				errs = append(errs, fmt.Errorf("group %q member %q is not a valid name (must match %s)", g.Name, m, reName))
+			case seenMember[m]:
+				errs = append(errs, fmt.Errorf("group %q lists member %q twice", g.Name, m))
+			case !declaredUser[m]:
+				errs = append(errs, fmt.Errorf("group %q member %q is not a user in this roster", g.Name, m))
+			}
+			seenMember[m] = true
+		}
+	}
+
 	seenUserName := map[string]bool{}
 	seenUID := map[uint32]string{}
 	for _, u := range ro.Users {
@@ -231,7 +254,6 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 
 	// --- id classification: protected => always error; out-of-scope => error/skip ---
 	keptGroups := ro.Groups[:0:0]
-	keptGroupNames := map[string]bool{}
 	for _, g := range ro.Groups {
 		switch cls.GID(g.GID) {
 		case idrange.Protected:
@@ -244,7 +266,6 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 			}
 		default: // Managed
 			keptGroups = append(keptGroups, g)
-			keptGroupNames[g.Name] = true
 		}
 	}
 
@@ -259,12 +280,7 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 			} else {
 				errs = append(errs, fmt.Errorf("user %q uid %d is out of manage scope (use on_out_of_scope: skip to ignore)", u.Name, u.UID))
 			}
-		default: // Managed — validate its group references against the KEPT groups
-			for _, gname := range u.Groups {
-				if !keptGroupNames[gname] {
-					errs = append(errs, fmt.Errorf("user %q references group %q that is not a managed group in this roster", u.Name, gname))
-				}
-			}
+		default: // Managed
 			keptUsers = append(keptUsers, u)
 		}
 	}

@@ -71,8 +71,8 @@ func okFolder(g state.Group) state.Group {
 
 func TestCreateUserAndGroup(t *testing.T) {
 	d := &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 7001}},
-		Users:  []roster.User{{Name: "skim", UID: 3001, FullName: "Sunghyun Kim", Groups: []string{"team-a"}}},
+		Groups: []roster.Group{{Name: "team-a", GID: 7001, Members: []string{"skim"}}},
+		Users:  []roster.User{{Name: "skim", UID: 3001, FullName: "Sunghyun Kim"}},
 	}
 	got := Reconcile(d, state.New(), cls())
 	if !hasKind(got, CreateGroup) || !hasKind(got, CreateUser) {
@@ -82,8 +82,8 @@ func TestCreateUserAndGroup(t *testing.T) {
 
 func TestIdempotentNoChange(t *testing.T) {
 	d := &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 7001}},
-		Users:  []roster.User{{Name: "skim", UID: 3001, Groups: []string{"team-a"}}},
+		Groups: []roster.Group{{Name: "team-a", GID: 7001, Members: []string{"skim"}}},
+		Users:  []roster.User{{Name: "skim", UID: 3001}},
 	}
 	s := state.New()
 	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7001})
@@ -102,10 +102,10 @@ func TestAllGroupMembership(t *testing.T) {
 	d := &roster.Roster{
 		Groups: []roster.Group{
 			{Name: "everyone", GID: 7001, All: true},
-			{Name: "team-a", GID: 7002},
+			{Name: "team-a", GID: 7002, Members: []string{"jlee"}},
 		},
 		Users: []roster.User{
-			{Name: "jlee", UID: 3001, Groups: []string{"team-a"}},
+			{Name: "jlee", UID: 3001},
 			{Name: "gone", UID: 3002, Status: roster.Reserved},
 		},
 	}
@@ -136,8 +136,8 @@ func TestAllGroupMembership(t *testing.T) {
 
 func TestUpdateGroups(t *testing.T) {
 	d := &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 7001}, {Name: "team-b", GID: 7002}},
-		Users:  []roster.User{{Name: "jlee", UID: 3002, Groups: []string{"team-a", "team-b"}}},
+		Groups: []roster.Group{{Name: "team-a", GID: 7001, Members: []string{"jlee"}}, {Name: "team-b", GID: 7002, Members: []string{"jlee"}}},
+		Users:  []roster.User{{Name: "jlee", UID: 3002}},
 	}
 	s := state.New()
 	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7001})
@@ -380,8 +380,8 @@ func TestPreservesNonManagedGroups(t *testing.T) {
 	// skim is in team-a (managed) and docker (non-managed, preserved). A managed
 	// group change must NOT strip docker.
 	d := &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 7001}, {Name: "team-b", GID: 7002}},
-		Users:  []roster.User{{Name: "skim", UID: 3001, Groups: []string{"team-a", "team-b"}}},
+		Groups: []roster.Group{{Name: "team-a", GID: 7001, Members: []string{"skim"}}, {Name: "team-b", GID: 7002, Members: []string{"skim"}}},
+		Users:  []roster.User{{Name: "skim", UID: 3001}},
 	}
 	s := state.New()
 	s.Groups["team-a"] = okFolder(state.Group{Name: "team-a", GID: 7001})

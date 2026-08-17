@@ -21,11 +21,11 @@ const sampleYAML = `groups:
   - name: team-a
     gid: 7001
     description: Perception team
+    members: [skim]
 users:
   - name: skim
     uid: 3001
     full_name: Sunghyun Kim
-    groups: [team-a]
   - name: park
     uid: 3004
     status: disabled
@@ -134,11 +134,16 @@ func TestDuplicateNameRejected(t *testing.T) {
 	}
 }
 
-func TestUndefinedGroupRejected(t *testing.T) {
-	y := "users:\n  - name: a\n    uid: 3001\n    groups: [ghost]\n"
-	ro, _ := Load(strings.NewReader(y))
+func TestUndefinedMemberRejected(t *testing.T) {
+	// A group listing a member who is not a declared user is a refusal to load —
+	// the "이름이 없으면 실패" rule, symmetric to an undeclared owner.
+	y := "groups:\n  - name: team-a\n    gid: 7001\n    members: [ghost]\nusers:\n  - name: a\n    uid: 3001\n"
+	ro, err := Load(strings.NewReader(y))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
-		t.Fatal("expected undefined group rejection")
+		t.Fatal("expected a member that is not a declared user to be rejected")
 	}
 }
 
@@ -148,22 +153,6 @@ func TestFullNameSeparatorsRejected(t *testing.T) {
 		if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
 			t.Errorf("full_name %q should be rejected", bad)
 		}
-	}
-}
-
-func TestUserRefToDroppedGroupRejectedUnderSkip(t *testing.T) {
-	// A managed user referencing a group that is dropped as out-of-scope must be
-	// caught, not silently passed through to `usermod -G <nonexistent>` at apply.
-	ro := &Roster{
-		Groups: []Group{{Name: "legacy-team", GID: 9000}}, // out of manage scope (7000-7999)
-		Users:  []User{{Name: "alice", UID: 3001, Groups: []string{"legacy-team"}}},
-	}
-	_, err := ro.Validate(testClassifier(), PolicySkip)
-	if err == nil {
-		t.Fatal("kept user referencing a dropped (out-of-scope) group must be rejected")
-	}
-	if !strings.Contains(err.Error(), "not a managed group") {
-		t.Errorf("error = %v, want managed-group reference failure", err)
 	}
 }
 

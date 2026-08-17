@@ -86,11 +86,11 @@ func memberOp(op, brief string) *xli.Command {
 			// told it worked and the membership is not there.
 			var (
 				changed bool
-				groups  []string
+				members []string
 			)
 			err := roster.WithLock(path, func() error {
 				var err error
-				changed, groups, err = editMembership(cmd, c, path, op, user, group)
+				changed, members, err = editMembership(cmd, c, path, op, user, group)
 				return err
 			})
 			if err != nil {
@@ -104,14 +104,14 @@ func memberOp(op, brief string) *xli.Command {
 					"user":    user,
 					"group":   group,
 					"changed": changed,
-					"groups":  groups,
+					"members": members,
 				})
 			}
 			if !changed {
 				cmd.Printf("no change: %s is already %s %s\n", user, alreadyWord(op), group)
 				return nil
 			}
-			cmd.Printf("%s: %s -> [%s]\n", user, opPast(op), strings.Join(groups, ", "))
+			cmd.Printf("%s %s %s; %s now: [%s]\n", user, opPast(op), group, group, strings.Join(members, ", "))
 			cmd.Println("run `usersync apply` to converge the system")
 			return nil
 		}),
@@ -130,19 +130,22 @@ func editMembership(cmd *xli.Command, c *config.Config, path, op, user, group st
 		return false, nil, err
 	}
 
-	// The group has to be one this roster declares. Without the check the edit
+	// Both names have to be ones this roster declares. Without the checks the edit
 	// would write a membership that `usersync apply` then rejects, so the failure
 	// would land on the next boot instead of on this caller.
 	if err := declaresGroup(src, group); err != nil {
+		return false, nil, err
+	}
+	if err := declaresUser(src, user); err != nil {
 		return false, nil, err
 	}
 
 	var changed bool
 	switch op {
 	case "add":
-		changed, err = doc.AddGroup(user, group)
+		changed, err = doc.AddMember(group, user)
 	default:
-		changed, err = doc.RemoveGroup(user, group)
+		changed, err = doc.RemoveMember(group, user)
 	}
 	if err != nil {
 		return false, nil, err
@@ -173,8 +176,8 @@ func editMembership(cmd *xli.Command, c *config.Config, path, op, user, group st
 		}
 	}
 
-	groups, _ := doc.Groups(user)
-	return changed, groups, nil
+	members, _ := doc.Members(group)
+	return changed, members, nil
 }
 
 func alreadyWord(op string) string {
@@ -206,4 +209,20 @@ func declaresGroup(src []byte, group string) error {
 		}
 	}
 	return fmt.Errorf("%w: %q is not declared in the roster", roster.ErrNoSuchGroup, group)
+}
+
+// declaresUser reports whether the roster declares the user — the member being
+// added must be an account this roster names, the same rule Validate enforces,
+// caught here so the caller gets a clear error instead of a refused write.
+func declaresUser(src []byte, user string) error {
+	ro, err := roster.Load(strings.NewReader(string(src)))
+	if err != nil {
+		return err
+	}
+	for _, u := range ro.Users {
+		if u.Name == user {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %q is not declared in the roster", roster.ErrNoSuchUser, user)
 }

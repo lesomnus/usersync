@@ -10,32 +10,36 @@ import (
 
 // The real file's shape: comments in every position that matters, blank-line
 // grouping, flow sequences, a trailing inline comment, and both non-active
-// lifecycle states.
+// lifecycle states. Membership lives on the group, in `members`.
 const sample = `# roster.yaml — desired users/groups. Version-controlled; edit then ` + "`usersync apply`" + `.
 
-# Shared (team) groups.
+# Shared (team) groups. Membership is declared here, in ` + "`members`" + `.
 groups:
   - name: team-a
     gid: 10001
     description: Perception team
+    members: [skim, jlee]      # who is on the team
 
   - name: team-b
     gid: 10002
     description: Planning team
+    members: [jlee]
+
+  - name: team-c
+    gid: 10003
+    description: Ops team       # no members -> empty team
 
 # Users. ` + "`name`" + ` unique; ` + "`uid`" + ` within the user range.
 users:
   - name: skim
     uid: 3001
     full_name: Sunghyun Kim
-    groups: [team-a]           # supplementary (team) groups; omit for home-only
   - name: jlee
     uid: 3002
     full_name: Jiwon Lee
-    groups: [team-a, team-b]
   - name: ychoi
     uid: 3003
-    full_name: Yuna Choi       # no groups -> home only
+    full_name: Yuna Choi
 
   # Lifecycle: omit ` + "`status`" + ` for active.
   - name: park
@@ -96,10 +100,10 @@ func lineDelta(a, b string) (added, removed []string) {
 // of the padding in the source. So the FIRST machine write to a hand-aligned
 // roster re-aligns its inline comments -- once, and never again.
 //
-// That is the entire residual churn of this approach: two lines in the shipped
-// roster, against the 17 of 46 that a struct round-trip rewrites. It is pinned
-// here so that if the library ever stops doing it, the change is noticed rather
-// than stumbled upon.
+// That is the entire residual churn of this approach: the two hand-aligned
+// inline comments, against the many lines a struct round-trip rewrites. It is
+// pinned here so that if the library ever stops doing it, the change is noticed
+// rather than stumbled upon.
 func TestPrintingNormalizesTrailingCommentAlignment(t *testing.T) {
 	d := parse(t, sample)
 
@@ -115,19 +119,20 @@ func TestPrintingNormalizesTrailingCommentAlignment(t *testing.T) {
 	}
 }
 
-// The whole reason this package exists. Adding one person to one team must
-// touch one line -- not reformat the file, not drop the comments, not expand
-// the flow sequences. A diff nobody can read is not an account-management
-// record, however complete it is.
-func TestAddGroupChangesExactlyOneLine(t *testing.T) {
+// The whole reason this package exists. Adding one person to one team must touch
+// one line -- not reformat the file, not drop the comments, not expand the flow
+// sequences. A diff nobody can read is not an account-management record, however
+// complete it is.
+func TestAddMemberChangesExactlyOneLine(t *testing.T) {
 	d := parse(t, sample)
 
-	changed, err := d.AddGroup("ychoi", "team-b")
+	// team-c has no members key, so the membership is one added line.
+	changed, err := d.AddMember("team-c", "ychoi")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
-		t.Fatal("AddGroup reported no change")
+		t.Fatal("AddMember reported no change")
 	}
 
 	// Measured against a PRINT of the unedited document, so the comment
@@ -139,7 +144,7 @@ func TestAddGroupChangesExactlyOneLine(t *testing.T) {
 		t.Fatalf("adding one member changed +%d/-%d lines, want +1/-0:\n+%s\n-%s",
 			len(added), len(removed), strings.Join(added, "\n+"), strings.Join(removed, "\n-"))
 	}
-	if !strings.Contains(added[0], "team-b") {
+	if !strings.Contains(added[0], "ychoi") {
 		t.Errorf("the added line is not the membership: %q", added[0])
 	}
 }
@@ -148,7 +153,7 @@ func TestAddGroupChangesExactlyOneLine(t *testing.T) {
 // positions, blank lines, flow style, key order.
 func TestEditPreservesCommentsAndLayout(t *testing.T) {
 	d := parse(t, sample)
-	if _, err := d.AddGroup("skim", "team-b"); err != nil {
+	if _, err := d.AddMember("team-b", "skim"); err != nil {
 		t.Fatal(err)
 	}
 	got := d.String()
@@ -157,7 +162,7 @@ func TestEditPreservesCommentsAndLayout(t *testing.T) {
 		"# roster.yaml — desired users/groups",
 		"# Shared (team) groups.",
 		"# Lifecycle: omit",
-		"# no groups -> home only",
+		"# no members -> empty team",
 		"description: Perception team",
 		"status: reserved",
 	} {
@@ -165,12 +170,12 @@ func TestEditPreservesCommentsAndLayout(t *testing.T) {
 			t.Errorf("lost %q", want)
 		}
 	}
-	// Flow style stays flow style.
-	if !strings.Contains(got, "groups: [team-a, team-b]") {
+	// Flow style stays flow style (sorted on edit).
+	if !strings.Contains(got, "members: [jlee, skim]") {
 		t.Errorf("flow sequence was expanded:\n%s", got)
 	}
 	// Blank-line grouping survives.
-	if !strings.Contains(got, "description: Perception team\n\n  - name: team-b") {
+	if !strings.Contains(got, "members: [jlee, skim]\n\n  - name: team-c") {
 		t.Errorf("blank line between groups was deleted:\n%s", got)
 	}
 }
@@ -178,10 +183,10 @@ func TestEditPreservesCommentsAndLayout(t *testing.T) {
 func TestAddAndRemoveAreIdempotent(t *testing.T) {
 	d := parse(t, sample)
 
-	if changed, err := d.AddGroup("skim", "team-a"); err != nil || changed {
+	if changed, err := d.AddMember("team-a", "skim"); err != nil || changed {
 		t.Fatalf("adding an existing membership: changed=%v err=%v", changed, err)
 	}
-	if changed, err := d.RemoveGroup("skim", "team-b"); err != nil || changed {
+	if changed, err := d.RemoveMember("team-b", "skim"); err != nil || changed {
 		t.Fatalf("removing an absent membership: changed=%v err=%v", changed, err)
 	}
 	// Both reported no change, so a caller writes nothing at all -- which is the
@@ -194,24 +199,24 @@ func TestAddAndRemoveAreIdempotent(t *testing.T) {
 	}
 }
 
-// Removing someone's last team must leave a home-only user, written the way a
-// person writes one -- no `groups: []` residue.
-func TestRemoveLastGroupDropsTheKey(t *testing.T) {
+// Removing a team's last member must leave an empty team, written the way a
+// person writes one -- no `members: []` residue.
+func TestRemoveLastMemberDropsTheKey(t *testing.T) {
 	d := parse(t, sample)
 
-	if _, err := d.RemoveGroup("skim", "team-a"); err != nil {
+	if _, err := d.RemoveMember("team-b", "jlee"); err != nil {
 		t.Fatal(err)
 	}
 	got := d.String()
-	if strings.Contains(got, "groups: []") {
-		t.Errorf("left an empty groups key:\n%s", got)
+	if strings.Contains(got, "members: []") {
+		t.Errorf("left an empty members key:\n%s", got)
 	}
-	groups, err := d.Groups("skim")
+	members, err := d.Members("team-b")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 0 {
-		t.Errorf("groups = %v, want none", groups)
+	if len(members) != 0 {
+		t.Errorf("members = %v, want none", members)
 	}
 }
 
@@ -219,10 +224,10 @@ func TestRemoveLastGroupDropsTheKey(t *testing.T) {
 // to produce something the boot sequence will refuse.
 func TestEditedDocumentStillLoads(t *testing.T) {
 	d := parse(t, sample)
-	if _, err := d.AddGroup("ychoi", "team-b"); err != nil {
+	if _, err := d.AddMember("team-c", "ychoi"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.RemoveGroup("jlee", "team-a"); err != nil {
+	if _, err := d.RemoveMember("team-a", "jlee"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -231,14 +236,14 @@ func TestEditedDocumentStillLoads(t *testing.T) {
 		t.Fatalf("edited roster no longer loads: %v", err)
 	}
 	byName := map[string][]string{}
-	for _, u := range ro.Users {
-		byName[u.Name] = u.Groups
+	for _, g := range ro.Groups {
+		byName[g.Name] = g.Members
 	}
-	if got := byName["ychoi"]; len(got) != 1 || got[0] != "team-b" {
-		t.Errorf("ychoi groups = %v, want [team-b]", got)
+	if got := byName["team-c"]; len(got) != 1 || got[0] != "ychoi" {
+		t.Errorf("team-c members = %v, want [ychoi]", got)
 	}
-	if got := byName["jlee"]; len(got) != 1 || got[0] != "team-b" {
-		t.Errorf("jlee groups = %v, want [team-b]", got)
+	if got := byName["team-a"]; len(got) != 1 || got[0] != "skim" {
+		t.Errorf("team-a members = %v, want [skim]", got)
 	}
 	// The reserved tombstone is still there. An edit that released a uid
 	// reservation would be the worst possible outcome of this feature.
@@ -253,14 +258,14 @@ func TestEditedDocumentStillLoads(t *testing.T) {
 	}
 }
 
-func TestUnknownNamesAreRefused(t *testing.T) {
+func TestUnknownGroupIsRefused(t *testing.T) {
 	d := parse(t, sample)
 
-	if _, err := d.AddGroup("nobody", "team-a"); !errors.Is(err, ErrNoSuchUser) {
-		t.Errorf("AddGroup(unknown user) = %v, want ErrNoSuchUser", err)
+	if _, err := d.AddMember("nogroup", "skim"); !errors.Is(err, ErrNoSuchGroup) {
+		t.Errorf("AddMember(unknown group) = %v, want ErrNoSuchGroup", err)
 	}
-	if _, err := d.Groups("nobody"); !errors.Is(err, ErrNoSuchUser) {
-		t.Errorf("Groups(unknown user) = %v, want ErrNoSuchUser", err)
+	if _, err := d.Members("nogroup"); !errors.Is(err, ErrNoSuchGroup) {
+		t.Errorf("Members(unknown group) = %v, want ErrNoSuchGroup", err)
 	}
 }
 
@@ -269,9 +274,9 @@ func TestUnknownNamesAreRefused(t *testing.T) {
 // far more likely to be deliberate than to be corruption.
 func TestUneditableShapesAreRefused(t *testing.T) {
 	for name, src := range map[string]string{
-		"no users key":       "groups:\n  - name: team-a\n    gid: 10001\n",
-		"users is a mapping": "users:\n  skim:\n    uid: 3001\n",
-		"two documents":      sample + "---\nusers: []\n",
+		"no groups key":       "users:\n  - name: skim\n    uid: 3001\n",
+		"groups is a mapping": "groups:\n  team-a:\n    gid: 10001\n",
+		"two documents":       sample + "---\ngroups: []\n",
 	} {
 		if _, err := ParseDocument([]byte(src)); !errors.Is(err, ErrNotEditable) {
 			t.Errorf("%s: err = %v, want ErrNotEditable", name, err)
@@ -286,7 +291,7 @@ func TestWriteFilePreservesMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := WriteFile(path, []byte("users: []\n")); err != nil {
+	if err := WriteFile(path, []byte("groups: []\n")); err != nil {
 		t.Fatal(err)
 	}
 

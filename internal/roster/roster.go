@@ -224,10 +224,19 @@ type Group struct {
 	// open to the world.
 	Anonymous Anonymous `yaml:"anonymous,omitempty"`
 
+	// Members are the accounts on this team — the membership, declared on the
+	// group where owners and readers already live. Each name must be a user
+	// declared in the same roster; a name that is not is a refusal to load, the
+	// same as an undeclared owner. Membership is read and written here, not on the
+	// user: `groups[].members` is the desired set, and apply reconciles each named
+	// account's supplementary groups to match (usermod -G). A user in no group's
+	// members is home-only. Mutually exclusive with All (which IS every user).
+	Members []string `yaml:"members,omitempty"`
+
 	// All, when true, makes this group contain EVERY active managed user, without
-	// listing each in `users[].groups`. usersync maintains the membership: an
-	// account added to the roster joins automatically, one disabled or reserved
-	// leaves. It is the counterpart of Anonymous, on the other side of the
+	// listing each in `members`. usersync maintains the membership: an account
+	// added to the roster joins automatically, one disabled or reserved leaves. It
+	// is the counterpart of Anonymous, on the other side of the
 	// anonymous line — where Anonymous opens the folder's "other" bits to the
 	// world (the nobody identity included), an `all` group is a real POSIX group
 	// nobody is in, so used as a reader it grants read to every signed-in user and
@@ -245,11 +254,17 @@ type Group struct {
 
 // User is a managed SMB-only user.
 type User struct {
-	Name     string   `yaml:"name"`
-	UID      uint32   `yaml:"uid"`
-	FullName string   `yaml:"full_name,omitempty"`
-	Groups   []string `yaml:"groups,omitempty"`
-	Status   Status   `yaml:"status,omitempty"`
+	Name     string `yaml:"name"`
+	UID      uint32 `yaml:"uid"`
+	FullName string `yaml:"full_name,omitempty"`
+	Status   Status `yaml:"status,omitempty"`
+
+	// Groups is the user's supplementary groups, but it is NOT read from the
+	// roster (yaml:"-", so a stray `groups:` under a user is rejected by strict
+	// decode). Membership is declared on the group, in `groups[].members`;
+	// reconcile fills this in per user by inverting that, and the rest of the
+	// pipeline reads it here as before.
+	Groups []string `yaml:"-"`
 }
 
 // Roster is the complete declared desired state.

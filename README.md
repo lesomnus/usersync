@@ -18,12 +18,17 @@ the web and SMB paths, and what changes when an on-prem AD arrives.
 ```yaml
 # roster.yaml — desired state
 groups:
-  - { name: team-a, gid: 10001, description: Perception team }
+  - { name: team-a, gid: 10001, description: Perception team, members: [skim] }
 users:
-  - { name: skim, uid: 3001, full_name: Sunghyun Kim, groups: [team-a] }
+  - { name: skim, uid: 3001, full_name: Sunghyun Kim }
   - { name: park, uid: 3004, status: disabled }   # SMB off, home + uid kept
   - { name: oldhand, uid: 3005, status: reserved } # no account; uid burned so it is never reused
 ```
+
+Membership is declared on the **group**, in `members`, next to `owners` and
+`readers` — the group is the one place a team is described. A user in no group's
+`members` is home-only. (`groups[].members` names must be declared users; a name
+that is not is a refusal to load.)
 
 Ids live in a reserved band: **uid 3000–9999** (users, each with a UPG whose gid
 equals its uid) and **gid 10000–19999** (team groups). The band is what a future
@@ -120,7 +125,7 @@ Two things it does not do:
 
 - **The roster still owns the membership list.** An owner who runs `gpasswd -a`
   adds a member, and the next `apply` takes them back out, because
-  `users[].groups` is the desired state and apply replaces the set exactly. The
+  `groups[].members` is the desired state and apply replaces the set exactly. The
   durable path is an edit to the roster — see `usersync member` below.
 - **It grants nothing where users cannot log in.** With `/usr/sbin/nologin` and a
   locked unix password, no member can run `gpasswd` at all, so the gshadow entry
@@ -135,7 +140,7 @@ silently dropped.
 
 `usersync member` is for callers that are not a person — a web UI, a script. It
 edits `roster.yaml` through the document's syntax tree rather than by decoding
-and re-encoding it, so comments, blank lines and `groups: [team-a]` flow style
+and re-encoding it, so comments, blank lines and `members: [alice, bob]` flow style
 all survive and a membership change shows up as **one changed line**. Decoding
 and re-encoding the shipped roster rewrites 17 of its 46 lines, which is not
 data loss but is the difference between a reviewable change and a file that

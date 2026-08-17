@@ -292,24 +292,35 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		// present, gid matches, folder correct, owners agree, readers agree => no-op.
 	}
 
-	// Groups declared `all: true` contain every active user without listing each
-	// in the roster: their membership is maintained here by adding the group to
-	// each active user's supplementary set, so a user's usermod -G carries it and
-	// the ordinary reader/ACL machinery treats them like any other member. A
-	// reserved or disabled account is left out — an `all` group is "everyone who
-	// can sign in", and its whole use is being read by all of them.
-	var allGroups []string
+	// Membership is declared on the group (`groups[].members`); invert it here into
+	// each user's supplementary set, which is what the rest of the pipeline (and
+	// usermod -G) works from. An `all: true` group holds every ACTIVE user without
+	// listing them — a reserved or disabled account is left out, since the whole
+	// use of an `all` group is being read by everyone who can sign in.
+	activeUser := map[string]bool{}
+	for _, u := range desiredUsers {
+		if u.Status == roster.Active {
+			activeUser[u.Name] = true
+		}
+	}
+	userGroups := map[string][]string{}
 	for _, g := range desiredGroups {
 		if g.All {
-			allGroups = append(allGroups, g.Name)
+			for _, u := range desiredUsers {
+				if activeUser[u.Name] {
+					userGroups[u.Name] = append(userGroups[u.Name], g.Name)
+				}
+			}
+			continue
+		}
+		for _, m := range g.Members {
+			userGroups[m] = append(userGroups[m], g.Name)
 		}
 	}
 
 	// --- users ---
 	for _, u := range desiredUsers {
-		if len(allGroups) > 0 && u.Status == roster.Active {
-			u.Groups = append(append([]string(nil), u.Groups...), allGroups...)
-		}
+		u.Groups = userGroups[u.Name] // inverted from the groups' member lists
 		out = append(out, reconcileUser(u, actual, cls, uidOwner, gidOwner)...)
 	}
 

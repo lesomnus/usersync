@@ -94,6 +94,11 @@ func Load(r io.Reader) (*Roster, error) {
 		}
 		return nil, fmt.Errorf("decode roster: %w", err)
 	}
+	// Fold profiles into the users so everything downstream (validate, reconcile,
+	// the roster print) sees the resolved policy, not a reference.
+	if err := ro.ResolveProfiles(); err != nil {
+		return nil, fmt.Errorf("resolve profiles: %w", err)
+	}
 	return &ro, nil
 }
 

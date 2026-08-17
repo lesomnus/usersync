@@ -74,10 +74,12 @@ type groupView struct {
 }
 
 type userView struct {
-	Name     string `json:"name"`
-	UID      uint32 `json:"uid"`
-	FullName string `json:"full_name,omitempty"`
-	Status   string `json:"status"`
+	Name     string  `json:"name"`
+	UID      uint32  `json:"uid"`
+	FullName string  `json:"full_name,omitempty"`
+	Status   string  `json:"status"`
+	Home     bool    `json:"home"`            // whether a personal home is provisioned
+	Quota    *uint64 `json:"quota,omitempty"` // byte limit (resolved from profile); null = unlimited
 }
 
 func newRosterView(ro *roster.Roster) rosterView {
@@ -95,12 +97,18 @@ func newRosterView(ro *roster.Roster) rosterView {
 		})
 	}
 	for _, u := range ro.Users {
-		v.Users = append(v.Users, userView{
+		uv := userView{
 			Name:     u.Name,
 			UID:      u.UID,
 			FullName: u.FullName,
 			Status:   u.Status.String(),
-		})
+			Home:     u.WantsHome(),
+		}
+		if u.Quota != nil {
+			b := uint64(*u.Quota)
+			uv.Quota = &b
+		}
+		v.Users = append(v.Users, uv)
 	}
 	return v
 }

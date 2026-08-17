@@ -259,6 +259,16 @@ type User struct {
 	FullName string `yaml:"full_name,omitempty"`
 	Status   Status `yaml:"status,omitempty"`
 
+	// Profile names a profile (from Roster.Profiles) this user inherits policy
+	// from. Empty falls back to the "default" profile if one is declared, else the
+	// built-in defaults. A user's own fields always win over the profile's.
+	Profile string `yaml:"profile,omitempty"`
+
+	// Quota caps the bytes this user's uid may own on the managed store. Absent
+	// (nil) is unlimited; a value (including 0) is a real limit. Enforced by the
+	// filesystem quota backend if one is configured (see the quota package).
+	Quota *Size `yaml:"quota,omitempty"`
+
 	// Home controls whether this user gets a personal home directory (and thus a
 	// personal `\\host\<name>` SMB share). Absent (nil) means yes — the default,
 	// what everyone has. `home: false` skips it: the account still exists, still
@@ -282,6 +292,11 @@ func (u User) WantsHome() bool { return u.Home == nil || *u.Home }
 
 // Roster is the complete declared desired state.
 type Roster struct {
+	// Profiles are reusable per-user policy bundles, inherited via `profile:` (or
+	// the "default" profile for users that name none). It exists so an operator
+	// declares "interns get no home and a zero quota" once, not on every account.
+	Profiles map[string]Profile `yaml:"profiles,omitempty"`
+
 	Groups []Group `yaml:"groups,omitempty"`
 	Users  []User  `yaml:"users,omitempty"`
 }

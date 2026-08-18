@@ -50,11 +50,11 @@ provider: shadow-utils
   - name: team-a
     gid: 10001
     description: Perception team
+    members: [skim]
 users:
   - name: skim
     uid: 3001
     full_name: Sunghyun Kim
-    groups: [team-a]
   - name: oldhand
     uid: 3005
     status: reserved

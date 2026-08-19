@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/lesomnus/usersync/internal/cmd/config"
 	"github.com/lesomnus/usersync/internal/executor"
 	"github.com/lesomnus/usersync/internal/fsops"
 	"github.com/lesomnus/usersync/internal/quota"
@@ -43,87 +44,95 @@ func NewCmdApply() *xli.Command {
 			}
 			defer unlock()
 
-			cls := c.Classifier()
-
-			ro, skipped, err := loadRoster(cmd, c, cls)
-			if err != nil {
-				return err
-			}
-			warnSkipped(cmd, skipped)
-
-			runner := run.Exec{}
-			p, s, err := backends(c, runner)
-			if err != nil {
-				return err
-			}
-			qc, err := quotaController(c, runner)
-			if err != nil {
-				return err
-			}
-			// Pre-flight the quota backend. If a configured backend cannot enforce
-			// right now (e.g. zfs unreachable from this container), DEGRADE to no
-			// enforcement with a loud warning rather than failing the run: apply is
-			// on the boot path under `set -e`, and a quota that cannot be set must
-			// not take the whole server down with it — the same best-effort stance
-			// darak takes on this exact `zfs` call for usage accounting. The warning
-			// is the signal to fix the mount; accounts still reconcile meanwhile.
-			// ErrUnsupported (no backend configured) is the silent, expected case.
-			if err := qc.Probe(ctx); err != nil {
-				if !errors.Is(err, quota.ErrUnsupported) {
-					fmt.Fprintf(errW(cmd), "warning: quota backend unavailable, quotas NOT enforced this run: %v\n", err)
-				}
-				qc = quota.Nop{}
-			}
-			actual, err := executor.Collect(ctx, p, s, cls, executor.CollectOpts{
-				HomeBase:   c.Paths.Home,
-				GroupsBase: c.Paths.Groups,
-				FS:         fsops.OS{},
-				Quota:      qc,
-				Warn:       errW(cmd),
-			})
-			if err != nil {
-				return err
-			}
-
-			actions := reconcile.Reconcile(ro, actual, cls)
-			res := report.Result{DryRun: false, Actions: actions, Skipped: skipped}
-
-			// A seed is only needed when some action creates an SMB account.
-			var der *secret.Deriver
-			if needsSeed(actions) {
-				der, err = deriver(c)
-				if err != nil {
-					return err
-				}
-			}
-
-			d := executor.Deps{
-				Provider:   p,
-				Samba:      s,
-				Deriver:    der,
-				FS:         fsops.OS{},
-				Quota:      qc,
-				HomeBase:   c.Paths.Home,
-				GroupsBase: c.Paths.Groups,
-			}
-			results, applyErr := d.Apply(ctx, actions)
-			res.Errors = results // report reflects what actually happened
-
-			if jsonRequested(cmd) {
-				_ = report.JSON(cmd, res)
-			} else {
-				_ = report.Text(cmd, res)
-			}
-
-			if applyErr != nil {
-				return fmt.Errorf("apply: %w", applyErr)
-			}
-			if report.ExitCode(res) != 0 {
-				return fmt.Errorf("apply completed but roster contains refusals requiring manual intervention")
-			}
-			return nil
+			return runApplyOnce(ctx, cmd, c)
 		}),
 	}
+}
+
+// runApplyOnce loads the roster, collects the actual state, reconciles, executes
+// the actions, and prints the report. It is the whole of `apply` minus the flag /
+// root / lock preamble, factored out so `watch` can run the same cycle on each
+// roster change. The caller holds the run lock and has checked root + manage mode.
+func runApplyOnce(ctx context.Context, cmd *xli.Command, c *config.Config) error {
+	cls := c.Classifier()
+
+	ro, skipped, err := loadRoster(cmd, c, cls)
+	if err != nil {
+		return err
+	}
+	warnSkipped(cmd, skipped)
+
+	runner := run.Exec{}
+	p, s, err := backends(c, runner)
+	if err != nil {
+		return err
+	}
+	qc, err := quotaController(c, runner)
+	if err != nil {
+		return err
+	}
+	// Pre-flight the quota backend. If a configured backend cannot enforce right
+	// now (e.g. zfs unreachable from this container), DEGRADE to no enforcement
+	// with a loud warning rather than failing the run: apply is on the boot path
+	// under `set -e`, and a quota that cannot be set must not take the whole
+	// server down with it — the same best-effort stance darak takes on this exact
+	// `zfs` call for usage accounting. The warning is the signal to fix the mount;
+	// accounts still reconcile meanwhile. ErrUnsupported (no backend configured)
+	// is the silent, expected case.
+	if err := qc.Probe(ctx); err != nil {
+		if !errors.Is(err, quota.ErrUnsupported) {
+			fmt.Fprintf(errW(cmd), "warning: quota backend unavailable, quotas NOT enforced this run: %v\n", err)
+		}
+		qc = quota.Nop{}
+	}
+	actual, err := executor.Collect(ctx, p, s, cls, executor.CollectOpts{
+		HomeBase:   c.Paths.Home,
+		GroupsBase: c.Paths.Groups,
+		FS:         fsops.OS{},
+		Quota:      qc,
+		Warn:       errW(cmd),
+	})
+	if err != nil {
+		return err
+	}
+
+	actions := reconcile.Reconcile(ro, actual, cls)
+	res := report.Result{DryRun: false, Actions: actions, Skipped: skipped}
+
+	// A seed is only needed when some action creates an SMB account.
+	var der *secret.Deriver
+	if needsSeed(actions) {
+		der, err = deriver(c)
+		if err != nil {
+			return err
+		}
+	}
+
+	d := executor.Deps{
+		Provider:   p,
+		Samba:      s,
+		Deriver:    der,
+		FS:         fsops.OS{},
+		Quota:      qc,
+		HomeBase:   c.Paths.Home,
+		GroupsBase: c.Paths.Groups,
+	}
+	results, applyErr := d.Apply(ctx, actions)
+	res.Errors = results // report reflects what actually happened
+
+	if jsonRequested(cmd) {
+		_ = report.JSON(cmd, res)
+	} else {
+		_ = report.Text(cmd, res)
+	}
+
+	if applyErr != nil {
+		return fmt.Errorf("apply: %w", applyErr)
+	}
+	if report.ExitCode(res) != 0 {
+		return fmt.Errorf("apply completed but roster contains refusals requiring manual intervention")
+	}
+	return nil
 }
 
 // needsSeed reports whether any action will DERIVE a password (i.e. register a

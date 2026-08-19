@@ -210,6 +210,24 @@ func TestCLIApplyRefusesWithoutRoot(t *testing.T) {
 	}
 }
 
+// watch is a mutating, long-running command. Without root it must refuse in the
+// preamble — before the poll loop — so this returns instead of blocking. It also
+// pins that watch is wired into the command set at all.
+func TestCLIWatchRefusesWithoutRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root")
+	}
+	bin, dir := binary(t), fixture(t)
+
+	r := runCLI(t, bin, dir, "watch")
+	if r.code == 0 {
+		t.Fatal("watch exited 0 as a non-root user")
+	}
+	if !strings.Contains(r.stderr, "root") {
+		t.Errorf("stderr = %q, want it to name root as the reason", r.stderr)
+	}
+}
+
 // mode: audit means a directory owns the accounts. apply must refuse, and it
 // must refuse for THAT reason — a container entrypoint keys off this.
 func TestCLIApplyRefusesInAuditMode(t *testing.T) {

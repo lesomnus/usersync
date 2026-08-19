@@ -56,3 +56,32 @@ target "app" {
     "${REPO}:${BUILD_DATE}-${BUILD_ID}",
   ]
 }
+
+# The SMB file-server image (deploy/smb-server): a real runtime, not a binary
+# carrier — smbd + winbindd + usersync on Debian. Built from source with the repo
+# root as context (it needs the Go tree and the entrypoint), so it does NOT use
+# the ./dist pipeline the `app` target does. Published under a SEPARATE image name
+# so its digest pins independently of the CLI carrier and of the darak web image.
+target "smb" {
+  target     = "app"
+  context    = "."
+  dockerfile = "deploy/smb-server/Dockerfile"
+  args = {
+    BUILD_HASH  = BUILD_HASH
+    BUILD_ID    = BUILD_ID
+    APP_VERSION = APP_VERSION
+  }
+  labels = {
+    "org.opencontainers.image.title"    = "usersync-smb",
+    "org.opencontainers.image.licenses" = "Apache-2.0",
+    "org.opencontainers.image.url"      = "https://github.com/lesomnus/usersync",
+    "org.opencontainers.image.revision" = "${BUILD_HASH}",
+    "org.opencontainers.image.version"  = "${APP_VERSION}",
+  }
+  tags = [
+    "${REPO}-smb:${TAG}",
+    "${REPO}-smb:${BUILD_ID}",
+    "${REPO}-smb:${BUILD_DATE}",
+    "${REPO}-smb:${BUILD_DATE}-${BUILD_ID}",
+  ]
+}

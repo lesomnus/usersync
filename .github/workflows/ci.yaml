@@ -14,6 +14,7 @@ on:
       - scripts/**
       - docker-bake.hcl
       - Dockerfile
+      - deploy/**
       - go.mod
       - go.sum
       - main.go
@@ -43,7 +44,9 @@ jobs:
         uses: docker/bake-action@v7
         with:
           source: .
-          targets: test,build
+          # `smb` here gates the SMB file-server image (deploy/smb-server) on the
+          # same PR the code changes on, amd64 only for speed.
+          targets: test,build,smb
           set: |
             *.platform=linux/amd64
             *.cache-from=type=gha
@@ -132,8 +135,14 @@ jobs:
         uses: docker/bake-action@v7
         with:
           source: .
-          targets: app
+          # app = the CLI binary carrier (context ./dist); smb = the SMB
+          # file-server runtime (context ., built from source). Separate image
+          # names, each multi-arch, each pinned independently downstream.
+          targets: app,smb
           set: |
             app.platform=linux/amd64
             app.platform=linux/arm64
             app.output=type=registry
+            smb.platform=linux/amd64
+            smb.platform=linux/arm64
+            smb.output=type=registry

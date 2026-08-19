@@ -157,6 +157,15 @@ type Deps struct {
 	HomeBase   string
 	GroupsBase string
 	Shell      string // defaults to DefaultShell if empty
+
+	// PosixOnly runs the account half of each action and skips the half the SMB
+	// server owns: a CreateGroup makes the group but not its folder, a CreateUser
+	// makes the passwd entry and memberships but no home directory and no tdbsam
+	// account. The caller has already filtered out the standalone folder/tdbsam/
+	// quota actions; this covers the sub-steps bundled inside a create. It is how
+	// the web pod keeps /etc/passwd in sync without touching the shared data tree
+	// or the single-writer passdb the SMB server is authoritative for.
+	PosixOnly bool
 }
 
 func (d Deps) shell() string {
@@ -187,6 +196,9 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 	case reconcile.CreateGroup:
 		if err := d.Provider.EnsureGroup(ctx, provider.GroupSpec{Name: a.Name, GID: a.GID}); err != nil {
 			return err
+		}
+		if d.PosixOnly {
+			return nil // the SMB server owns the group folder
 		}
 		return d.FS.EnsureGroupDir(filepath.Join(d.GroupsBase, a.Name), a.GID, a.DirPerm)
 
@@ -279,8 +291,9 @@ func (d Deps) createUser(ctx context.Context, a reconcile.Action, enable bool) e
 	}
 	// A `home: false` user has a passwd home path (set by useradd -d above) but no
 	// directory: the account exists and gets team access, only its personal share
-	// has nothing to serve.
-	if a.Home {
+	// has nothing to serve. In PosixOnly the home directory belongs to the SMB
+	// server too, so it is never created here.
+	if a.Home && !d.PosixOnly {
 		if err := d.FS.EnsureHomeDir(home, a.UID, a.UID); err != nil {
 			return err
 		}
@@ -290,6 +303,12 @@ func (d Deps) createUser(ctx context.Context, a reconcile.Action, enable bool) e
 	}
 	if err := d.Provider.LockPassword(ctx, a.Name); err != nil {
 		return err
+	}
+	// The passwd account, its memberships, and the unix password lock are the whole
+	// of a PosixOnly create — the tdbsam account and its enabled state are the SMB
+	// server's to own (and its passdb is a single-writer file).
+	if d.PosixOnly {
+		return nil
 	}
 	if !a.HasSmb {
 		pw, err := d.initPW(a.Name)

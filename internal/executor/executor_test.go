@@ -142,6 +142,44 @@ func TestCreateUserSequence(t *testing.T) {
 	}
 }
 
+// PosixOnly (the web pod) creates the passwd account and its memberships and
+// locks the unix password, but touches neither the home directory nor tdbsam —
+// the SMB server owns both. Even a `home: true` user gets no HomeDir/SmbCreate.
+func TestPosixOnlyCreateUserSkipsHomeAndSmb(t *testing.T) {
+	var log []string
+	d := newDeps(&log)
+	d.PosixOnly = true
+	if _, err := d.Apply(context.Background(), []reconcile.Action{
+		{Kind: reconcile.CreateUser, Name: "skim", UID: 3001, FullName: "Sunghyun Kim", Groups: []string{"team-a"}, Home: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"EnsureUser(skim,uid=3001,gid=3001,home=/research/home/skim,shell=/usr/sbin/nologin)",
+		"SetGroups(skim,[team-a])",
+		"Lock(skim)",
+	}
+	if strings.Join(log, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("posix-only sequence mismatch:\n got %v\nwant %v", log, want)
+	}
+}
+
+// PosixOnly CreateGroup makes the group but leaves its folder to the SMB server.
+func TestPosixOnlyCreateGroupSkipsFolder(t *testing.T) {
+	var log []string
+	d := newDeps(&log)
+	d.PosixOnly = true
+	if _, err := d.Apply(context.Background(), []reconcile.Action{
+		{Kind: reconcile.CreateGroup, Name: "team-a", GID: 10001, DirPerm: 0o2770},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"EnsureGroup(team-a,10001)"}
+	if strings.Join(log, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("posix-only group mismatch:\n got %v\nwant %v", log, want)
+	}
+}
+
 // A `home: false` user (Home unset on the action) is created with an account and
 // SMB but NO home directory.
 func TestCreateUserWithoutHome(t *testing.T) {

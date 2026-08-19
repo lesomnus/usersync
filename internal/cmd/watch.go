@@ -33,7 +33,7 @@ func NewCmdWatch() *xli.Command {
 		Brief: "apply the roster, then reconcile on every change (long-running)",
 		Synop: "For a container: applies the roster now and re-applies each time it changes, keeping the last good state when a change does not load. --reload-smb also rewrites smb.conf and reloads smbd each cycle.",
 
-		Flags: append(commonFlags(),
+		Flags: append(applyFlags(),
 			&flg.Switch{Name: "reload-smb", Brief: "also rewrite smb.conf and reload smbd each cycle"},
 			&flg.String{Name: "smb-conf", Brief: "smb.conf path to edit (with --reload-smb)", Value: z.Ptr("/etc/samba/smb.conf")},
 			&flg.String{Name: "interval", Brief: "how often to poll the roster for changes", Value: z.Ptr("2s")},
@@ -52,6 +52,12 @@ func NewCmdWatch() *xli.Command {
 			}
 
 			reloadSmb, _ := flg.Get[bool](cmd, "reload-smb")
+			// The two roles are exclusive: --reload-smb is the SMB server (owns
+			// smb.conf, tdbsam, folders), --nss-only is the web pod (POSIX accounts
+			// only). Asking for both is a misconfigured entrypoint, not a mode.
+			if nssOnly, _ := flg.Get[bool](cmd, "nss-only"); nssOnly && reloadSmb {
+				return fmt.Errorf("watch: --nss-only and --reload-smb are mutually exclusive (web pod vs SMB server)")
+			}
 			interval := 2 * time.Second
 			if s, ok := flg.Get[string](cmd, "interval"); ok && s != "" {
 				d, err := time.ParseDuration(s)

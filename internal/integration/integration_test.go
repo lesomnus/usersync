@@ -166,9 +166,9 @@ func (s stack) apply(t *testing.T, ro *roster.Roster) {
 
 func fullRoster() *roster.Roster {
 	return &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 10001}},
+		Groups: []roster.Group{{Name: "team-a", GID: 10001, Members: []string{"skim"}}},
 		Users: []roster.User{
-			{Name: "skim", UID: 3001, FullName: "Sunghyun Kim", Groups: []string{"team-a"}},
+			{Name: "skim", UID: 3001, FullName: "Sunghyun Kim"},
 			{Name: "park", UID: 3004, Status: roster.Disabled},
 		},
 	}
@@ -452,9 +452,12 @@ func TestPreservesProtectedGroupOnUpdate(t *testing.T) {
 
 	// Roster change (skim gains team-b) fires a supplementary-group update.
 	s.apply(t, &roster.Roster{
-		Groups: []roster.Group{{Name: "team-a", GID: 10001}, {Name: "team-b", GID: 10002}},
+		Groups: []roster.Group{
+			{Name: "team-a", GID: 10001, Members: []string{"skim"}},
+			{Name: "team-b", GID: 10002, Members: []string{"skim"}},
+		},
 		Users: []roster.User{
-			{Name: "skim", UID: 3001, Groups: []string{"team-a", "team-b"}},
+			{Name: "skim", UID: 3001},
 			{Name: "park", UID: 3004, Status: roster.Disabled},
 		},
 	})

@@ -155,6 +155,64 @@ func (a Anonymous) FolderPerm() uint32 {
 	}
 }
 
+// All selects a whole cohort as a group's membership, instead of naming each
+// account in `members`. `all: true` is every active user; `all: <profile>` is
+// every active user whose EFFECTIVE profile is that name — a user with no
+// `profile:` counts as "default", so `all: default` is exactly the users who
+// inherit the default policy.
+//
+// It is inclusion by cohort, never subtraction. POSIX has no "everyone except X"
+// and neither does this: "non-intern" is expressed positively as `all: default`
+// (the default-profile cohort), not as an exclusion of the intern profile. The
+// zero value is not an `all` group.
+type All struct {
+	Everyone bool   // all: true
+	Profile  string // all: <profile-name>
+}
+
+// IsSet reports whether this is an `all` group at all.
+func (a All) IsSet() bool { return a.Everyone || a.Profile != "" }
+
+// IsZero lets goccy honour `omitempty` on a non-`all` group.
+func (a All) IsZero() bool { return !a.IsSet() }
+
+// UnmarshalYAML accepts `all: true`/`all: false` (a bool → every active user) or
+// `all: <profile>` (a string → that profile's cohort).
+func (a *All) UnmarshalYAML(unmarshal func(any) error) error {
+	var raw any
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	switch v := raw.(type) {
+	case bool:
+		a.Everyone = v
+	case string:
+		switch s := strings.TrimSpace(v); s {
+		case "", "false":
+			// not an `all` group
+		case "true":
+			a.Everyone = true
+		default:
+			a.Profile = s
+		}
+	default:
+		return fmt.Errorf("all must be a bool (every user) or a profile name, got %T", raw)
+	}
+	return nil
+}
+
+// MarshalYAML encodes `all` back to true / false / <profile>.
+func (a All) MarshalYAML() ([]byte, error) {
+	switch {
+	case a.Everyone:
+		return []byte("true"), nil
+	case a.Profile != "":
+		return []byte(a.Profile), nil
+	default:
+		return []byte("false"), nil
+	}
+}
+
 // Group is a shared (team) group and its backing folder.
 type Group struct {
 	Name        string `yaml:"name"`
@@ -249,7 +307,28 @@ type Group struct {
 	// them by hand and to remember every new hire. The group is otherwise ordinary
 	// (it has a gid and a folder of its own), so its folder doubles as a
 	// company-wide shared space, or is simply left unused.
-	All bool `yaml:"all,omitempty"`
+	All All `yaml:"all,omitempty"`
+}
+
+// GroupMembership returns the accounts a group contains: its explicit `members`
+// for an ordinary group, or the selected cohort for an `all` group — every active
+// user for `all: true`, or the active users whose effective profile matches for
+// `all: <profile>`. It is the ONE place `all` is resolved, so the flag cannot
+// come to mean two different things in the reconciler and the roster export.
+func (ro *Roster) GroupMembership(g Group) []string {
+	if !g.All.IsSet() {
+		return g.Members
+	}
+	var out []string
+	for _, u := range ro.Users {
+		if u.Status != Active {
+			continue
+		}
+		if g.All.Everyone || u.effectiveProfileName() == g.All.Profile {
+			out = append(out, u.Name)
+		}
+	}
+	return out
 }
 
 // User is a managed SMB-only user.

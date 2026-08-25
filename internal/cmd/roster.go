@@ -91,9 +91,12 @@ func newRosterView(ro *roster.Roster) rosterView {
 			Description: g.Description,
 			Owners:      nonNilStrings(g.Owners),
 			Readers:     nonNilStrings(g.Readers),
-			Members:     nonNilStrings(g.Members),
-			Anonymous:   g.Anonymous.String(),
-			All:         g.All,
+			// Resolved: for an `all` group this is the concrete cohort (every active
+			// user, or the profile's cohort), so a consumer reads one member list and
+			// never expands `all` itself. `all` stays a display hint below.
+			Members:   nonNilStrings(ro.GroupMembership(g)),
+			Anonymous: g.Anonymous.String(),
+			All:       g.All.IsSet(),
 		})
 	}
 	for _, u := range ro.Users {

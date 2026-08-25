@@ -2,12 +2,93 @@ package roster
 
 import (
 	"bytes"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/goccy/go-yaml"
 	"github.com/lesomnus/usersync/internal/idrange"
 )
+
+// GroupMembership resolves `all` to a concrete cohort: `all: true` is every
+// active user, `all: <profile>` is that profile's cohort (untagged users count
+// as "default"), and an ordinary group is its explicit members. This is what
+// makes "non-intern" expressible as `all: default` without any exclusion.
+func TestAllProfileCohort(t *testing.T) {
+	ro := &Roster{
+		Profiles: map[string]Profile{"intern": {}},
+		Users: []User{
+			{Name: "alice", UID: 3001},                   // untagged -> default cohort
+			{Name: "bob", UID: 3002},                     // untagged -> default cohort
+			{Name: "temp", UID: 3003, Profile: "intern"}, // intern cohort
+			{Name: "gone", UID: 3004, Status: Reserved},  // inactive -> in no `all`
+		},
+	}
+	j := func(g Group) string {
+		m := ro.GroupMembership(g)
+		sort.Strings(m)
+		return strings.Join(m, ",")
+	}
+	if got := j(Group{All: All{Everyone: true}}); got != "alice,bob,temp" {
+		t.Errorf("all:true = %q, want every ACTIVE user (reserved left out)", got)
+	}
+	if got := j(Group{All: All{Profile: "default"}}); got != "alice,bob" {
+		t.Errorf("all:default = %q, want the non-intern cohort", got)
+	}
+	if got := j(Group{All: All{Profile: "intern"}}); got != "temp" {
+		t.Errorf("all:intern = %q, want just the intern", got)
+	}
+	if got := j(Group{Members: []string{"y", "x"}}); got != "x,y" {
+		t.Errorf("explicit group = %q, want its members verbatim", got)
+	}
+}
+
+func TestAllProfileLoadAndValidate(t *testing.T) {
+	// `all: default` parses to a profile cohort and validates.
+	ro, err := Load(strings.NewReader(`profiles:
+  intern: { home: false }
+users:
+  - { name: alice, uid: 3001 }
+  - { name: temp, uid: 3002, profile: intern }
+groups:
+  - { name: dev, gid: 7001, all: default }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ro.Groups[0].All.Profile != "default" {
+		t.Fatalf("all parsed as %+v, want Profile=default", ro.Groups[0].All)
+	}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err != nil {
+		t.Fatalf("all: default should validate: %v", err)
+	}
+
+	// `all: <undeclared>` is refused, naming the missing profile.
+	bad, err := Load(strings.NewReader(`users:
+  - { name: a, uid: 3001 }
+groups:
+  - { name: x, gid: 7001, all: ghosts }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bad.Validate(testClassifier(), PolicyError); err == nil || !strings.Contains(err.Error(), "profile") {
+		t.Fatalf("all: ghosts should fail naming the profile, got %v", err)
+	}
+
+	// `all` and `members` together is a contradiction.
+	both, err := Load(strings.NewReader(`users:
+  - { name: a, uid: 3001 }
+groups:
+  - { name: x, gid: 7001, all: true, members: [a] }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := both.Validate(testClassifier(), PolicyError); err == nil {
+		t.Fatal("all + members should fail validation")
+	}
+}
 
 func testClassifier() *idrange.Classifier {
 	return idrange.New(idrange.Config{

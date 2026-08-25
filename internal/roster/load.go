@@ -217,8 +217,16 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	// group IS every user, so listing members on it is a contradiction, not a
 	// refinement.
 	for _, g := range ro.Groups {
-		if g.All && len(g.Members) > 0 {
-			errs = append(errs, fmt.Errorf("group %q is `all: true` (every active user) and also lists members — remove the members list", g.Name))
+		if g.All.IsSet() && len(g.Members) > 0 {
+			errs = append(errs, fmt.Errorf("group %q is an `all` group (a whole cohort) and also lists members — remove the members list", g.Name))
+		}
+		// `all: <profile>` selects a profile's cohort, so the profile must exist.
+		// "default" is always valid: it is the cohort every untagged user inherits,
+		// declared as a `default` profile or not.
+		if p := g.All.Profile; p != "" && p != "default" {
+			if _, ok := ro.Profiles[p]; !ok {
+				errs = append(errs, fmt.Errorf("group %q is `all: %s` but no profile %q is declared", g.Name, p, p))
+			}
 		}
 		seenMember := map[string]bool{}
 		for _, m := range g.Members {

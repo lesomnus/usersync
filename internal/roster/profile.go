@@ -92,6 +92,18 @@ type Profile struct {
 	Quota *Size `yaml:"quota,omitempty"`
 }
 
+// effectiveProfileName is the profile a user is treated as belonging to when a
+// group selects a cohort with `all: <profile>`: its explicit `profile:`, or
+// "default" when it names none. This mirrors ResolveProfiles' fallback, so
+// `all: default` selects exactly the users that inherit the default policy —
+// whether or not a `default` profile block happens to be declared.
+func (u User) effectiveProfileName() string {
+	if u.Profile != "" {
+		return u.Profile
+	}
+	return "default"
+}
+
 // ResolveProfiles fills each user's unset policy fields from its profile: the one
 // named in `profile:`, or the profile named "default" for a user that names none.
 // A user's own field always wins, so a profile is a default, not an override. An

@@ -101,7 +101,7 @@ func TestIdempotentNoChange(t *testing.T) {
 func TestAllGroupMembership(t *testing.T) {
 	d := &roster.Roster{
 		Groups: []roster.Group{
-			{Name: "everyone", GID: 7001, All: true},
+			{Name: "everyone", GID: 7001, All: roster.All{Everyone: true}},
 			{Name: "team-a", GID: 7002, Members: []string{"jlee"}},
 		},
 		Users: []roster.User{

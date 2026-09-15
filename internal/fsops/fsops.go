@@ -1,34 +1,23 @@
 // Package fsops performs the filesystem side of provisioning (home and group
-// folders). These operations are backend-invariant (the same on any Linux), so
-// they are kept out of the account-backend abstraction. The FS interface lets
-// the executor be unit-tested without a real (root-requiring) filesystem.
+// folders, and the read-only views that carry reader groups). These operations
+// are backend-invariant (the same on any Linux), so they are kept out of the
+// account-backend abstraction. The FS interface lets the executor be unit-tested
+// without a real (root-requiring) filesystem.
 package fsops
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 )
 
-// ErrACLUnsupported means the filesystem at a path cannot store POSIX ACLs, so
-// a declared reader group cannot be enforced there. Deliberately distinct from
-// an ordinary setfacl failure: this one is a property of the deployment (a
-// filesystem with no ACL support, or mounted without it), and the caller turns
-// it into a refusal rather than a retry. On ZFS it means the dataset's acltype
-// is off; on ext4/xfs it is on by default. Measured on the deployment's own
-// pool before this was written — see the ADR-1 discussion.
-var ErrACLUnsupported = errors.New("filesystem does not support POSIX ACLs")
-
-// FS creates and permissions the home and group directories, and observes a
-// directory's presence/mode/owner (used to detect drift / partial provisioning).
+// FS creates and permissions the home and group directories, maintains the
+// read-only views that grant reader groups, and observes a directory's
+// presence/mode/owner (used to detect drift / partial provisioning).
 type FS interface {
 	// EnsureGroupDir makes path a setgid directory owned by group gid, with the
 	// given mode (perm bits plus 0o2000 setgid, e.g. 0o2770 private, or 0o2775 /
@@ -42,16 +31,22 @@ type FS interface {
 	Stat(path string) (exists bool, perm, uid, gid uint32)
 
 	// ReadReaderGIDs returns the gids granted a read-only (r-x, no w) ACL entry
-	// on path's ACCESS ACL, sorted. It is how reader drift is detected: the
-	// reconciler compares this against the roster's declared reader gids.
+	// on path's ACCESS ACL, sorted.
+	//
+	// Readers are no longer expressed this way, so on a converged system this
+	// answers empty. It is still read because a folder provisioned by an older
+	// version carries those entries, and they have to come off before the view
+	// is the only thing granting a reader — otherwise a reader taken out of the
+	// roster would keep the access the ACL still gives them.
 	ReadReaderGIDs(path string) ([]uint32, error)
-	// EnsureReaderACL makes readerGIDs exactly the read-only groups on path, as
-	// an access entry on the whole existing tree (so files already there become
-	// readable — the grant is retroactive, not only forward) and a default entry
-	// on every directory (so files created afterwards inherit it). It removes any
-	// named-group ACL entry not in the set. The writer group keeps rwx via the
-	// base mode. Returns ErrACLUnsupported when the filesystem cannot store ACLs.
-	EnsureReaderACL(path string, writerGID uint32, readerGIDs []uint32) error
+
+	// ReadReaderViews returns, per group folder name under groupsBase, the
+	// reader groups that currently hold a working read-only view of it.
+	ReadReaderViews(groupsBase string) (map[string][]string, error)
+	// EnsureReaderViews makes readers exactly the groups holding a read-only
+	// view of the team's folder, and clears any reader ACL left on the folder
+	// itself by an older version.
+	EnsureReaderViews(groupsBase, team string, teamGID uint32, readers []ReaderGroup) error
 }
 
 // OS is the real filesystem implementation.
@@ -112,7 +107,8 @@ func (OS) EnsureHomeDir(path string, uid, gid uint32) error {
 // format is a kernel/xattr detail (system.posix_acl_access), and the tools are
 // the same ones an operator reaches for to check the result by hand — so what
 // usersync writes and what `getfacl` shows an admin are produced by one
-// implementation, not two that can disagree.
+// implementation, not two that can disagree. The same reasoning applies to
+// mount(8) in view.go.
 
 // ReadReaderGIDs parses `getfacl` for named-group entries that grant read but
 // not write on the access ACL.
@@ -158,125 +154,6 @@ func parseReaderGIDs(getfacl string) []uint32 {
 	}
 	sort.Slice(gids, func(i, j int) bool { return gids[i] < gids[j] })
 	return gids
-}
-
-// EnsureReaderACL sets the reader entries to exactly readerGIDs and clears any
-// other named-group entry, on both the access and default ACLs.
-//
-// It rebuilds rather than patches: the whole named-group ACL is replaced from
-// the declared set, so a reader removed from the roster loses the entry, which
-// a series of `-m` additions would never do. The writer group's rwx comes from
-// the folder's own group mode (2770), so it needs no ACL entry — and giving it
-// one would only add a way for the two to disagree.
-func (o OS) EnsureReaderACL(path string, writerGID uint32, readerGIDs []uint32) error {
-	if err := aclSupported(path); err != nil {
-		return err
-	}
-
-	// The folder's own entries already say what the readers are, so if they are
-	// the declared set there is nothing to rebuild — return before touching the
-	// tree. This is the same sentinel the reconciler compares against
-	// (ReadReaderGIDs on the folder), so skipping here cannot disagree with the
-	// decision that got us called.
-	//
-	// It matters because the caller cannot always tell. A group is "new" whenever
-	// it is missing from /etc/group, and a container that keeps its data on a
-	// volume but its accounts in the image layer has every group look new on
-	// every boot — which made this rebuild run each time, over a tree that had
-	// not changed. Four recursive passes over 5,031,498 files (one real share)
-	// do not finish inside any startup budget, so the server never came up.
-	//
-	// A mismatch still rebuilds the whole tree: entries live per file, so a
-	// newly declared reader reaches existing files only by being written to each
-	// of them.
-	if cur, err := o.ReadReaderGIDs(path); err == nil {
-		want := slices.Clone(readerGIDs)
-		slices.Sort(want)
-		if slices.Equal(cur, want) {
-			return nil
-		}
-	}
-
-	// Start from a clean slate, recursively, so a de-declared reader survives
-	// nowhere in the tree — not on the folder and not on anything already inside
-	// it. -k drops default ACLs (directories only), -b drops extended access
-	// entries (every file); the base owner/group/other remain, so the 2770 mode
-	// is untouched.
-	if _, err := run("setfacl", "-R", "-k", path); err != nil {
-		return fmt.Errorf("clear default ACLs under %s: %w", path, err)
-	}
-	if _, err := run("setfacl", "-R", "-b", path); err != nil {
-		return fmt.Errorf("clear access ACLs under %s: %w", path, err)
-	}
-	if len(readerGIDs) == 0 {
-		return nil
-	}
-
-	// Access ACL over the WHOLE existing tree — this is what makes a reader
-	// retroactive: files already in the folder (e.g. data copied in before the
-	// reader was declared, or files that predate a newly-added reader) become
-	// readable, not only ones created afterwards. `rX` grants read on files and
-	// enter (x) on directories and never marks a plain file executable; setfacl
-	// recomputes each object's mask as it goes, so the entry stays effective. The
-	// writer group keeps its rwx from the base 2770 mode, needing no entry.
-	access := make([]string, 0, len(readerGIDs))
-	for _, gid := range readerGIDs {
-		access = append(access, fmt.Sprintf("g:%d:rX", gid))
-	}
-	if _, err := run("setfacl", "-R", "-m", strings.Join(access, ","), path); err != nil {
-		return fmt.Errorf("set reader access ACL under %s: %w", path, err)
-	}
-
-	// Default ACL for inheritance, on every directory in the tree, so a file
-	// created later — anywhere beneath, over the web or over SMB — is born with
-	// the reader's r-x already on it. Default ACLs live on directories only, so
-	// this walks the directories instead of recursing blindly: `setfacl -R` with
-	// a default (d:) entry would error on the first plain file it met. Owner and
-	// writer group keep rwx in the default so inherited files stay team-writable.
-	def := []string{"d:u::rwx", "d:g::rwx", "d:o::---"}
-	for _, gid := range readerGIDs {
-		def = append(def, fmt.Sprintf("d:g:%d:r-x", gid))
-	}
-	defSpec := strings.Join(def, ",")
-	if err := filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		if _, err := run("setfacl", "-m", defSpec, p); err != nil {
-			return fmt.Errorf("set default ACL on %s: %w", p, err)
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("set default ACLs under %s: %w", path, err)
-	}
-	return nil
-}
-
-// aclSupported reports whether the filesystem at path can store ACLs, by
-// probing with a harmless self-referential setfacl and reading the errno.
-//
-// The probe grants the file's own owning group what the mode already gives it,
-// so on success nothing has changed; on a filesystem with no ACL support it
-// fails with ENOTSUP/EOPNOTSUPP, which is the signal to refuse.
-func aclSupported(path string) error {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	gid := fi.Sys().(*syscall.Stat_t).Gid
-	out, err := run("setfacl", "-m", fmt.Sprintf("g:%d:rwx", gid), path)
-	if err == nil {
-		return nil
-	}
-	low := strings.ToLower(out + " " + err.Error())
-	if strings.Contains(low, "not supported") || strings.Contains(low, "notsup") ||
-		strings.Contains(low, "operation not supported") {
-		return fmt.Errorf("%w: %s", ErrACLUnsupported, path)
-	}
-	return fmt.Errorf("acl probe on %s: %w", path, err)
 }
 
 func run(name string, args ...string) (string, error) {

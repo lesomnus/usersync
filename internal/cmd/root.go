@@ -25,6 +25,7 @@ func NewCmdRoot() *xli.Command {
 			NewCmdWatch(),
 			NewCmdExport(),
 			NewCmdAudit(),
+			NewCmdExplain(),
 			NewCmdDetach(),
 			NewCmdPurge(),
 			NewCmdShares(),

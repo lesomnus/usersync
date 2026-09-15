@@ -94,6 +94,20 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 		}
 		out.Users[name] = u
 	}
+	// Which reader views are mounted is one read of the mount table for the whole
+	// tree, not a probe per group — so it is done once, here. A failure leaves
+	// viewsKnown false, which reads as "unknown" rather than "no readers": the
+	// reconciler then heals instead of concluding the views are correctly absent.
+	var views map[string][]string
+	viewsKnown := false
+	if opts.FS != nil {
+		v, err := opts.FS.ReadReaderViews(opts.GroupsBase)
+		if err == nil {
+			views, viewsKnown = v, true
+		} else if opts.Warn != nil {
+			fmt.Fprintf(opts.Warn, "warning: reader views unavailable (mount table): %v\n", err)
+		}
+	}
 	for name, g := range raw.Groups {
 		if cls.GID(g.GID) != idrange.Managed {
 			continue
@@ -101,14 +115,13 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 		if opts.FS != nil {
 			path := filepath.Join(opts.GroupsBase, name)
 			g.FolderExists, g.FolderPerm, _, g.FolderGID = opts.FS.Stat(path)
-			// The folder's reader ACL is only readable when the folder is there.
-			// A read failure leaves ReadersKnown false, so it reads as "unknown"
-			// rather than "no readers" — the reconciler then heals it as part of
-			// the folder-drift path instead of concluding the ACL is correctly
-			// empty.
+			g.ReaderViews, g.ReaderViewsKnown = views[name], viewsKnown
+			// Reader ACLs on the folder are what an older version wrote. Reading
+			// them is one getfacl on the folder itself — no walk — and it is what
+			// tells the reconciler there is still a second way in to close.
 			if g.FolderExists {
 				if gids, err := opts.FS.ReadReaderGIDs(path); err == nil {
-					g.ReaderGIDs, g.ReadersKnown = gids, true
+					g.LegacyReaderGIDs = gids
 				}
 			}
 		}
@@ -165,6 +178,10 @@ type Deps struct {
 	// quota actions; this covers the sub-steps bundled inside a create. It is how
 	// the web pod keeps /etc/passwd in sync without touching the shared data tree
 	// or the single-writer passdb the SMB server is authoritative for.
+	//
+	// Reader views are the exception, and have to be: a mount is visible only in
+	// the mount namespace that made it, so "the SMB server owns it" cannot apply
+	// to something the web pod's own processes need to see.
 	PosixOnly bool
 }
 
@@ -211,13 +228,16 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 		return d.Provider.SetSupplementaryGroups(ctx, a.Name, a.Groups)
 
 	case reconcile.SetGroupReaders:
-		// The folder exists by now: for a new group the CreateGroup action ran
-		// first (same reconcile iteration, appended before this), and for an
-		// existing one it was already there. EnsureReaderACL refuses on a
-		// filesystem that cannot store ACLs, which becomes a failed action — the
-		// right outcome, because a declared reader nothing enforces is worse than
-		// an error at apply time.
-		return d.FS.EnsureReaderACL(filepath.Join(d.GroupsBase, a.Name), a.GID, a.ReaderGIDs)
+		// Both folders exist by now: the reconciler holds these actions back until
+		// every CreateGroup has run, because the view is mounted inside the
+		// READER's folder.
+		//
+		// This is the one action PosixOnly does NOT skip. A mount belongs to a
+		// mount namespace, so the web pod cannot inherit the SMB pod's views and
+		// has to make its own — and unlike the folders, there is nothing here to
+		// race over: the mount is namespace-local and the only thing written to
+		// the shared tree is one empty directory to mount over.
+		return d.FS.EnsureReaderViews(d.GroupsBase, a.Name, a.GID, a.Readers)
 
 	case reconcile.SetGroupAdmins:
 		// A backend with no gshadow reports ErrUnsupported. That is not a failed

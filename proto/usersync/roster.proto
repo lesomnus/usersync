@@ -55,10 +55,12 @@ message Group {
   repeated string owners = 4;
 
   // Other groups whose members may READ this group's folder but not write it.
-  // Each must be a group declared in the same roster. Enforced with a POSIX ACL
-  // (an r-x access + default entry per reader group) rather than mode bits,
-  // which cannot split read from write within one group. Where the filesystem
-  // cannot store ACLs, apply refuses. See roster.Group.Readers.
+  // Each must be a group declared in the same roster. Enforced by a read-only
+  // id-mapped bind of this folder inside each reader group's own folder, rather
+  // than by mode bits, which cannot split read from write within one group. The
+  // mapping makes this folder's gid appear to be the reader's, so the read is an
+  // ordinary mode-bit read and every write is refused with EROFS. See
+  // roster.Group.Readers.
   repeated string readers = 5;
 
   // Unauthenticated ("anonymous") web access to this group's folder. One of

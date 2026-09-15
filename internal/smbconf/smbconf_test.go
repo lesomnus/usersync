@@ -93,35 +93,46 @@ func TestAnonymousShares(t *testing.T) {
 	}
 }
 
-// A reader group joins a private team share read-only: it is added to `valid
-// users` so smbd lets it connect, and to `read list` so smbd refuses its writes
-// — the team itself stays writable. Anonymous shares cannot carry readers
-// (roster load rejects that combination), so this is the private form only.
-func TestRenderReaders(t *testing.T) {
+// Declaring a reader group changes nothing in smb.conf.
+//
+// A reader reaches the team's folder through a read-only view mounted inside
+// their OWN group folder, which their own share already serves — so the team's
+// share stays gated to the team, and the read-only half is the kernel's verdict
+// rather than a `read list` that only smbd honours. That is what makes the web
+// path and SMB agree without either being configured for it.
+func TestRenderReadersChangeNoShare(t *testing.T) {
 	gs := []roster.Group{
 		{Name: "sim", GID: 10001, Readers: []string{"sim-readers", "aux-readers"}},
 		{Name: "sim-readers", GID: 10002},
 		{Name: "aux-readers", GID: 10003},
 	}
-	secs := sections(Render(gs, "/h", "/g"))
+	withReaders := sections(Render(gs, "/h", "/g"))
 
-	sim := secs["sim"]
-	// Team first, then reader groups sorted for a stable config.
-	if got := sim["valid users"]; got != "@sim @aux-readers @sim-readers" {
-		t.Errorf("valid users = %q; want the team plus sorted reader groups", got)
+	sim := withReaders["sim"]
+	if got := sim["valid users"]; got != "@sim" {
+		t.Errorf("valid users = %q; want the team only — a reader connects to their own share", got)
 	}
-	if got := sim["read list"]; got != "@aux-readers @sim-readers" {
-		t.Errorf("read list = %q; want the reader groups (sorted)", got)
+	if got, ok := sim["read list"]; ok {
+		t.Errorf("read list = %q; readers are enforced by the mount, not by smbd", got)
 	}
 	if sim["read only"] != "no" {
 		t.Errorf("team share must stay writable for the team (read only = no), got %q", sim["read only"])
 	}
-	// A reader group's OWN share is an ordinary private team, no read list.
-	if vu := secs["sim-readers"]["valid users"]; vu != "@sim-readers" {
+	// The reader group's own share is an ordinary private team share, and it is
+	// where the view shows up — nothing extra is emitted for it either.
+	if vu := withReaders["sim-readers"]["valid users"]; vu != "@sim-readers" {
 		t.Errorf("reader group's own share stays @sim-readers, got %q", vu)
 	}
-	if _, ok := secs["sim-readers"]["read list"]; ok {
-		t.Error("a team with no readers must not emit a read list")
+
+	// Stated as the property it is: the rendered block does not depend on
+	// `readers` at all.
+	plain := []roster.Group{
+		{Name: "sim", GID: 10001},
+		{Name: "sim-readers", GID: 10002},
+		{Name: "aux-readers", GID: 10003},
+	}
+	if got, want := Render(gs, "/h", "/g"), Render(plain, "/h", "/g"); got != want {
+		t.Errorf("declaring readers changed smb.conf:\n%s\nwant\n%s", got, want)
 	}
 }
 

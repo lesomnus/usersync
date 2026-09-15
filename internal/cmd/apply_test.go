@@ -11,15 +11,20 @@ import (
 // the SMB server owns. This pins exactly which kinds survive the filter — a new
 // action kind is dropped by default, which is the safe side for "do not touch
 // shared state", and adding one that SHOULD run here means updating this test.
+//
+// SetGroupReaders is kept, and it is the one kind whose place here has to be
+// argued: a reader view is a mount, and a mount exists only in the namespace
+// that made it. The SMB server cannot make this pod's views, so leaving it out
+// would mean readers can see the folder over SMB and not over the web.
 func TestNSSOnlyActionsKeepsPosixDropsShared(t *testing.T) {
 	kept := []reconcile.Kind{
-		reconcile.CreateGroup, reconcile.SetGroupAdmins,
+		reconcile.CreateGroup, reconcile.SetGroupAdmins, reconcile.SetGroupReaders,
 		reconcile.CreateUser, reconcile.CreateUserDisabled, reconcile.UpdateUserGroups,
 		reconcile.RefuseGroup, reconcile.OrphanGroup,
 		reconcile.RefuseUser, reconcile.OrphanUser, reconcile.ReservedPresent,
 	}
 	dropped := []reconcile.Kind{
-		reconcile.SetGroupReaders, reconcile.AddSmb, reconcile.EnableUser,
+		reconcile.AddSmb, reconcile.EnableUser,
 		reconcile.DisableUser, reconcile.EnsureHome, reconcile.SetUserQuota,
 		reconcile.ClearUserQuota,
 	}

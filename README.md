@@ -54,6 +54,7 @@ usersync export          # print the current managed state as a roster.yaml (boo
 usersync export --format csv    # the RFC2307 id assignments, for seeding a directory
 usersync export --format ldif --base-dn 'OU=X,DC=corp,DC=example,DC=com'
 usersync audit           # read-only: does what the system resolves match the roster?
+usersync explain         # read-only: who can read each folder, and is the view actually mounted?
 usersync detach <user>   # release the LOCAL account, keep the home (hand the name to AD)
 usersync purge <user>    # DANGEROUS: archive home, delete account + UPG, reserve the uid
 usersync shares          # print the smb.conf [homes]+[<team>] block from the roster
@@ -135,6 +136,57 @@ Two things it does not do:
 Every name must be a user declared in the same roster. Only shadow-utils has
 gshadow; on busybox and pw the field is reported as unsupported rather than
 silently dropped.
+
+### Read-only groups (`readers`)
+
+A group may declare `readers`: other groups whose members may read its folder but
+not write it.
+
+```yaml
+groups:
+  - name: team-a
+    gid: 10001
+    readers: [team-a-ro]   # members of team-a-ro read team-a, and cannot write it
+  - name: team-a-ro
+    gid: 10011             # an ordinary group; people join it via users[].groups
+```
+
+Mode bits cannot express this — owner, group, other, and no room to split reads
+from writes inside one group — so the grant is a **mount**, not something written
+on the files. Each reader group gets a read-only, id-mapped bind of the team's
+folder inside its own folder:
+
+```
+on disk       <groups>/team-a              root:team-a  2770 / 0660   (unchanged)
+the view      <groups>/team-a-ro/team-a    read-only, team-a's gid mapped to team-a-ro's
+```
+
+A reader therefore reads by the ordinary group mode bit — the files look like
+theirs — and every write is refused by the kernel with `EROFS`. The verdict is
+the kernel's, so SMB and the web agree without either being configured for it,
+and `smb.conf` does not change at all: the reader group's own share already
+serves the view.
+
+The reason it is a mount is cost. Written onto the files, declaring a reader had
+to reach every file in the tree: on a real share (12.4M files) that was 22
+minutes of writes, on the startup path, every time. A mount is one operation
+whether the folder holds ten files or ten million.
+
+What follows from that:
+
+- **Readers are not members**, so the team's own folder stays closed to them. If
+  the view is missing they are denied, never accidentally admitted.
+- **Mounts belong to a mount namespace**, so every container that serves the data
+  makes its own. `apply --nss-only` keeps this one action for that reason.
+- **They do not survive a reboot**, and do not need to: `apply` remakes them, in
+  constant time.
+- **A file owned by a reader group is invisible in that group's view** (the
+  mapping's destination cannot also be a source). Nothing chgrps to a reader
+  group.
+
+`usersync explain <group>` prints who can read a folder and whether each view is
+actually mounted — the question `getfacl` used to answer for free, now that the
+answer is split between the roster and the mount table.
 
 ### Editing membership from a program
 

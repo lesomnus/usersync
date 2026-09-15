@@ -22,22 +22,26 @@ import (
 // pod's boot apply and its hot-reload watch can select POSIX-only convergence.
 func applyFlags() flg.Flags {
 	return append(commonFlags(),
-		&flg.Switch{Name: "nss-only", Brief: "manage only POSIX accounts (/etc/passwd, groups, memberships); leave tdbsam, folders, ACLs, and quota to the SMB server"},
+		&flg.Switch{Name: "nss-only", Brief: "manage only POSIX accounts (/etc/passwd, groups, memberships) and this namespace's reader views; leave tdbsam, folders, and quota to the SMB server"},
 	)
 }
 
 // nssOnlyActions keeps only the actions a POSIX-only (NSS) apply may run: it
 // manages /etc/passwd, /etc/group, and supplementary/administrator memberships,
 // and it still reports refusals and orphans, but it leaves everything the SMB
-// server owns — tdbsam accounts, the data-tree folders and their ACLs, and
-// quotas — to that server. CreateGroup/CreateUser stay; the executor, told
-// PosixOnly, runs only their account half. Unknown/new kinds default to dropped,
-// the safe side for a mode whose whole purpose is not touching shared state.
+// server owns — tdbsam accounts, the data-tree folders, and quotas — to that
+// server. CreateGroup/CreateUser stay; the executor, told PosixOnly, runs only
+// their account half. Unknown/new kinds default to dropped, the safe side for a
+// mode whose whole purpose is not touching shared state.
+//
+// SetGroupReaders is kept, which looks like an exception and is not: a reader
+// view is a mount, mounts are per mount namespace, and this pod's users read
+// through this pod's processes. Nobody can make it on their behalf.
 func nssOnlyActions(in []reconcile.Action) []reconcile.Action {
 	out := make([]reconcile.Action, 0, len(in))
 	for _, a := range in {
 		switch a.Kind {
-		case reconcile.CreateGroup, reconcile.SetGroupAdmins,
+		case reconcile.CreateGroup, reconcile.SetGroupAdmins, reconcile.SetGroupReaders,
 			reconcile.CreateUser, reconcile.CreateUserDisabled, reconcile.UpdateUserGroups,
 			reconcile.RefuseGroup, reconcile.OrphanGroup,
 			reconcile.RefuseUser, reconcile.OrphanUser, reconcile.ReservedPresent:

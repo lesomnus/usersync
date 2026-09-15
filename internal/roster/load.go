@@ -179,16 +179,15 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 		}
 	}
 
-	// Readers name OTHER declared groups. A reader group that is not declared
-	// would be granted an ACL entry for a gid nothing resolves, and the drift
-	// check could never agree — so a name that does not exist is a refusal to
-	// load, exactly as an undeclared owner is.
+	// Readers name OTHER declared groups. The read-only view is mounted inside
+	// the reader group's OWN folder and maps to its gid, so a name that is not
+	// declared has neither — there would be nowhere to put the view and no id to
+	// map to. It is a refusal to load, exactly as an undeclared owner is.
 	for _, g := range ro.Groups {
 		// A reader group is a read-only grant. On a folder already open to the
 		// world (anonymous read or write), that grant adds nothing and, worse,
 		// contradicts the intent — so the two are refused together rather than one
-		// silently winning. It also keeps the reader ACL (which closes the default
-		// "other" entry) from fighting the open "other" mode bits.
+		// silently winning.
 		if g.Anonymous != AnonNone && len(g.Readers) > 0 {
 			errs = append(errs, fmt.Errorf("group %q is anonymous (%s) and also lists readers — a read-only reader is meaningless on a world-open folder; remove one", g.Name, g.Anonymous))
 		}

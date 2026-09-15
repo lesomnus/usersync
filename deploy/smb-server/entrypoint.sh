@@ -148,8 +148,9 @@ if [[ ${mode:-manage} == audit ]]; then
 	exec sleep infinity
 fi
 
-# The reconcile loop: re-apply the roster and reload smbd on every change. This
-# is PID 1; smbd/winbindd are daemonized children, exactly as in the
-# single-container image before the split.
+# The reconcile loop: re-apply the roster and reload smbd on every change. smbd
+# and winbindd are daemonized alongside it, exactly as in the single-container
+# image before the split — so they are orphans, and PID 1 (tini, see the
+# Dockerfile) is what reaps them and their helpers.
 log "usersync watch --reload-smb"
 exec usersync watch --reload-smb

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -167,9 +168,33 @@ func parseReaderGIDs(getfacl string) []uint32 {
 // a series of `-m` additions would never do. The writer group's rwx comes from
 // the folder's own group mode (2770), so it needs no ACL entry — and giving it
 // one would only add a way for the two to disagree.
-func (OS) EnsureReaderACL(path string, writerGID uint32, readerGIDs []uint32) error {
+func (o OS) EnsureReaderACL(path string, writerGID uint32, readerGIDs []uint32) error {
 	if err := aclSupported(path); err != nil {
 		return err
+	}
+
+	// The folder's own entries already say what the readers are, so if they are
+	// the declared set there is nothing to rebuild — return before touching the
+	// tree. This is the same sentinel the reconciler compares against
+	// (ReadReaderGIDs on the folder), so skipping here cannot disagree with the
+	// decision that got us called.
+	//
+	// It matters because the caller cannot always tell. A group is "new" whenever
+	// it is missing from /etc/group, and a container that keeps its data on a
+	// volume but its accounts in the image layer has every group look new on
+	// every boot — which made this rebuild run each time, over a tree that had
+	// not changed. Four recursive passes over 5,031,498 files (one real share)
+	// do not finish inside any startup budget, so the server never came up.
+	//
+	// A mismatch still rebuilds the whole tree: entries live per file, so a
+	// newly declared reader reaches existing files only by being written to each
+	// of them.
+	if cur, err := o.ReadReaderGIDs(path); err == nil {
+		want := slices.Clone(readerGIDs)
+		slices.Sort(want)
+		if slices.Equal(cur, want) {
+			return nil
+		}
 	}
 
 	// Start from a clean slate, recursively, so a de-declared reader survives

@@ -231,11 +231,11 @@ type Action struct {
 	FullName   string
 	Groups     []string // desired supplementary groups (create / update)
 	Status     roster.Status
-	HasSmb     bool     // create*: an SMB account already exists — do not reset its password
-	Home       bool     // create*: create the home directory (false for a `home: false` user)
-	Reason     string   // for refuse / orphan / status context
-	DirPerm    uint32   // create-group: the setgid folder mode to ensure (2770/2775/2777)
-	QuotaBytes uint64   // set-user-quota: the DECLARED byte limit (backend applies EnforceBytes)
+	HasSmb     bool   // create*: an SMB account already exists — do not reset its password
+	Home       bool   // create*: create the home directory (false for a `home: false` user)
+	Reason     string // for refuse / orphan / status context
+	DirPerm    uint32 // create-group: the setgid folder mode to ensure (2770/2775/2777)
+	QuotaBytes uint64 // set-user-quota: the DECLARED byte limit (backend applies EnforceBytes)
 
 	// Readers is the set of groups that get a read-only view of this group's
 	// folder (set-group-readers). Names and gids travel together because the

@@ -164,9 +164,9 @@ func TestIsReadOnlyIdmapped(t *testing.T) {
 func TestSplitViewPath(t *testing.T) {
 	const base = "/srv/data/teams"
 	for _, tc := range []struct {
-		point          string
-		reader, team   string
-		ok             bool
+		point        string
+		reader, team string
+		ok           bool
 	}{
 		{"/srv/data/teams/perception-ro/perception", "perception-ro", "perception", true},
 		{"/srv/data/teams", "", "", false},

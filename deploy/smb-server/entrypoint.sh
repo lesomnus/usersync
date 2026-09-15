@@ -15,6 +15,14 @@ set -euo pipefail
 CONFIG_DIR=${USERSYNC_CONFIG_DIR:-/etc/usersync}
 SMB_WORKGROUP=${SMB_WORKGROUP:-WORKGROUP}
 SMB_SERVER_STRING=${SMB_SERVER_STRING:-darak}
+# Operator drop-in for [global] settings the image does not bake in — e.g.
+# `lock directory` (to point smbstatus/profiling at a mounted path), `max log
+# size`, `smbd profiling level`. Samba's own `include` reads it inline at the END
+# of [global], so its parameters OVERRIDE the seeded defaults above them, and a
+# MISSING file is silently ignored — so this is always seeded and only takes
+# effect when the operator mounts a file here. Default sits in the config mount
+# the operator already provides, so no extra volume is needed.
+SMB_GLOBAL_INCLUDE=${SMB_GLOBAL_INCLUDE:-$CONFIG_DIR/smb.global.conf}
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() {
@@ -75,6 +83,7 @@ if [[ ! -f /etc/samba/smb.conf ]]; then
 		   full_audit:success = create_file mkdirat unlinkat renameat
 		   full_audit:failure = none
 		   full_audit:syslog = no
+		   include = ${SMB_GLOBAL_INCLUDE}
 	EOF
 fi
 

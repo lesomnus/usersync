@@ -42,6 +42,7 @@ FROM debian:trixie-slim AS app
 # zfsutils-linux — the `zfs` CLI for per-uid quota enforcement; userspace only,
 #                  driving the HOST's loaded module over a mounted /dev/zfs
 #                  (best-effort — a missing /dev/zfs warns and skips, never fails)
+# tini           — PID 1, see the ENTRYPOINT note
 #
 # ZFS is CDDL, so zfsutils-linux is in Debian `contrib`, not `main`; trixie-slim
 # ships only `main`, so contrib is enabled first (deb822, with the classic
@@ -53,7 +54,7 @@ RUN ( [ -f /etc/apt/sources.list.d/debian.sources ] \
 		|| sed -i 's/ main$/ main contrib/' /etc/apt/sources.list ) \
 	&& apt-get update -qq \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-		samba samba-common-bin winbind acl attr ca-certificates tzdata zfsutils-linux \
+		samba samba-common-bin winbind acl attr ca-certificates tzdata zfsutils-linux tini \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& rm -f /etc/samba/smb.conf
 
@@ -64,4 +65,21 @@ RUN chmod 0755 /usr/local/bin/usersync /usr/local/bin/entrypoint.sh
 # 445 SMB. With host networking it is not published; it is the host's own port.
 EXPOSE 445
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# tini is PID 1 so that orphans get reaped.
+#
+# The entrypoint daemonizes smbd and winbindd with -D and then `exec`s usersync,
+# which makes usersync PID 1 — and PID 1 inherits every orphan on the host side
+# of the container. smbd's `samba-dcerpcd` helpers are reparented there when they
+# outlive their forking parent, and the Go runtime never wait()s for a process it
+# did not start, so each one stays in the process table as a zombie. usersync
+# reaps its OWN children correctly (internal/run uses cmd.Run, which is Wait);
+# these are not its children.
+#
+# Nothing breaks while they accumulate — a zombie holds a PID slot and no memory
+# — but nothing bounds them either. Restarts used to hide this by clearing the
+# table; the pod is now stable for weeks, so the count only grows (observed: 98
+# on a 16-day-old pod).
+#
+# tini forwards signals to its direct child, and `exec` keeps usersync's PID, so
+# the shutdown path is unchanged.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

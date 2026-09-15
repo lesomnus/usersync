@@ -136,3 +136,52 @@ func TestEnsureReaderACLIsRetroactive(t *testing.T) {
 		t.Fatalf("pre-existing subdir did not gain the reader default ACL:\n%s", out)
 	}
 }
+
+// The folder's own entries are the sentinel, so a second call with the same
+// readers must not touch the tree — that is what keeps a boot from rebuilding
+// ACLs over millions of files that did not change. A different reader set still
+// has to reach every file, so both halves are asserted here.
+func TestEnsureReaderACLSkipsWhenFolderAlreadyMatches(t *testing.T) {
+	if _, err := exec.LookPath("setfacl"); err != nil {
+		t.Skip("setfacl not installed")
+	}
+	dir := t.TempDir()
+	fs := OS{}
+	if err := fs.EnsureReaderACL(dir, 0, []uint32{10011}); err != nil {
+		if err == ErrACLUnsupported {
+			t.Skip("filesystem has no ACL support")
+		}
+		t.Fatalf("EnsureReaderACL: %v", err)
+	}
+
+	// A file inside whose entry is then stripped by hand. The folder still says
+	// 10011, so the tree is out of step with it — and the skip is exactly the
+	// claim that this is not looked at.
+	f := filepath.Join(dir, "stripped.txt")
+	if err := os.WriteFile(f, []byte("x"), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.Command("setfacl", "-b", f).Output(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fs.EnsureReaderACL(dir, 0, []uint32{10011}); err != nil {
+		t.Fatalf("second EnsureReaderACL: %v", err)
+	}
+	if out, err := exec.Command("getfacl", "-pnE", f).Output(); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(out), "group:10011:") {
+		t.Fatalf("the tree was rebuilt though the folder already matched:\n%s", out)
+	}
+
+	// A different declared set is real drift: the rebuild runs and reaches the
+	// file that the skip above left alone.
+	if err := fs.EnsureReaderACL(dir, 0, []uint32{10012}); err != nil {
+		t.Fatalf("third EnsureReaderACL: %v", err)
+	}
+	if out, err := exec.Command("getfacl", "-pnE", f).Output(); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(string(out), "group:10012:") {
+		t.Fatalf("a changed reader set did not reach the existing file:\n%s", out)
+	}
+}

@@ -212,6 +212,25 @@ sudo ./usersync shares --reload    # 위 + smbd reload
 - usersync는 `# >>> usersync-shares >>>` … `# <<< usersync-shares <<<` **마커 사이만** 관리한다. 그 밖의 수동 설정은 건드리지 않는다.
 - testparm 검증에 실패하면 원본을 그대로 두고 중단한다.
 
+### 4.1 `[global]` 오버라이드 드롭인 (관측성 튜닝)
+
+이미지가 굽는 `[global]`은 최소값만 담는다. 전체 `smb.conf`를 통째로 마운트하지 않고 **몇 개 파라미터만 얹으려면**, `usersync-smb` 엔트리포인트가 시드하는 `[global]` 끝에 Samba의 `include`가 걸려 있다. 파일을 그 경로에 두면 그 값이 위의 기본값을 **재정의**하고, 파일이 없으면 Samba가 조용히 무시한다(항상 걸려 있어도 안전).
+
+- 기본 경로: **`$USERSYNC_CONFIG_DIR/smb.global.conf`**(기본 `/etc/usersync/smb.global.conf`) — roster.yaml과 같은 설정 마운트라 별도 볼륨이 필요 없다. `SMB_GLOBAL_INCLUDE` 환경변수로 옮길 수 있다.
+- **최초 부팅 때만** 시드된다(`smb.conf`가 이미 있으면 손대지 않음). 기존 배포에 넣으려면 컨테이너의 `/etc/samba/smb.conf`를 지우고 재시작하거나, 그 파일의 `[global]` 끝에 `include = …` 한 줄을 직접 추가한다.
+- 변경은 config reload로 반영된다(`usersync watch --reload-smb`가 이미 돌고 있음).
+
+컨테이너 밖에서 SMB를 관측할 때(예: `smbstatus`/profiling을 사이드카가 읽게) 흔히 얹는 값:
+
+```ini
+# /etc/usersync/smb.global.conf  ── [global]에 인라인으로 병합됨
+lock directory = /run/obs/samba   # smbstatus·smbprofile.tdb를 마운트된 경로로 (tmpfs 유지)
+max log size = 50000              # full_audit 로그 rotate 창을 넓혀 record 유실 방지
+smbd profiling level = count      # 디렉터리 순회(readdir) 카운터 — full_audit가 못 잡는 것
+```
+
+> `lock directory`를 옮기면 `smbstatus`(주소→계정 매핑)와 profiling tdb가 컨테이너 밖에서 읽힌다 — 모니터링을 붙이려고 smbd를 재시작(=사이드카 추가)할 필요가 없어진다.
+
 ---
 
 ## 5. 안전 규칙 (반드시 숙지)

@@ -241,18 +241,25 @@ func (p printFS) EnsureHomeDir(path string, uid, gid uint32) error {
 	return nil
 }
 
-// Stat and ReadReaderGIDs are unused during command preview (Collect uses the
-// real FS); present only to satisfy fsops.FS.
+// Stat and the two read methods are unused during command preview (Collect uses
+// the real FS); present only to satisfy fsops.FS.
 func (printFS) Stat(string) (bool, uint32, uint32, uint32) { return false, 0, 0, 0 }
 
 func (printFS) ReadReaderGIDs(string) ([]uint32, error) { return nil, nil }
 
-func (p printFS) EnsureReaderACL(path string, _ uint32, readerGIDs []uint32) error {
-	if len(readerGIDs) == 0 {
-		fmt.Fprintf(p.w, "    setfacl -bk %s   # no readers\n", path)
+func (printFS) ReadReaderViews(string) (map[string][]string, error) { return nil, nil }
+
+func (p printFS) EnsureReaderViews(groupsBase, team string, teamGID uint32, readers []fsops.ReaderGroup) error {
+	src := filepath.Join(groupsBase, team)
+	fmt.Fprintf(p.w, "    setfacl -b -k %s   # drop any reader ACL an older version left\n", src)
+	if len(readers) == 0 {
+		fmt.Fprintf(p.w, "    umount every read-only view of %s\n", src)
 		return nil
 	}
-	fmt.Fprintf(p.w, "    setfacl (reader gids %v, access+default r-x) on %s\n", readerGIDs, path)
+	for _, r := range readers {
+		point := fsops.ViewPath(groupsBase, team, r.Name)
+		fmt.Fprintf(p.w, "    mount --rbind -o ro,X-mount.idmap='<%d→%d>' %s %s\n", teamGID, r.GID, src, point)
+	}
 	return nil
 }
 

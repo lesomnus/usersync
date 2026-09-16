@@ -48,13 +48,19 @@ type Group struct {
 	Admins      []string
 	AdminsKnown bool
 
-	// ReaderGIDs are the gids granted a read-only ACL entry on the folder,
-	// sorted, as read back by getfacl. Compared against the roster's declared
-	// reader groups to detect ACL drift. ReadersKnown separates "no readers"
-	// from "the ACL could not be read" (a missing folder, or a filesystem with
-	// no ACL support), so silence is never mistaken for "no readers declared".
-	ReaderGIDs   []uint32
-	ReadersKnown bool
+	// ReaderViews are the reader groups that currently hold a working read-only
+	// view of this group's folder, sorted by name, as read back from the mount
+	// table. Compared against the roster's declared reader groups to detect
+	// drift. ReaderViewsKnown separates "no readers" from "the mount table could
+	// not be read", so silence is never mistaken for "no readers declared".
+	ReaderViews      []string
+	ReaderViewsKnown bool
+
+	// LegacyReaderGIDs are named-group ACL entries still present on the folder
+	// itself, which is how readers were granted before the views. They are drift
+	// in their own right: while one is there, a reader taken out of the roster
+	// still gets in, so the folder is not converged until they are gone.
+	LegacyReaderGIDs []uint32
 }
 
 // Smb is an actual SMB (tdbsam) account and whether it is enabled.

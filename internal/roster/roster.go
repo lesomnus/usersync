@@ -255,21 +255,35 @@ type Group struct {
 	// It is groups rather than a list of users on purpose. mode bits have three
 	// classes — owner, this group, other — with no room to split "writes" from
 	// "reads" inside one group, and opening `other` would publish the folder to
-	// everyone. The split lives in a POSIX ACL instead: the writer group keeps
-	// its rwx, and each reader group is granted r-x, on the folder AND as a
-	// default entry so files created afterwards inherit it. The kernel enforces
-	// the result, over both the web path and SMB, exactly as it enforces the
-	// mode bits (nas-design.md ADR-1).
+	// everyone.
+	//
+	// The split is made by a MOUNT rather than by anything written on the files:
+	// each reader group gets a read-only, id-mapped bind of this folder inside
+	// its own folder (<groups>/<reader>/<this group>), and the mapping makes the
+	// folder's gid appear to be the reader's own. So a reader reads by the
+	// ordinary group mode bit, and every write is refused by the kernel with
+	// EROFS — over the web path and SMB alike, exactly as the mode bits are
+	// (nas-design.md ADR-1).
+	//
+	// That it is a mount and not a file attribute is the point: declaring a
+	// reader costs one mount whether the folder holds ten files or ten million.
+	// Writing the grant onto the files instead meant touching every one of them,
+	// which on a real share (12.4M files) took 22 minutes of writes and could
+	// not be done inside any startup budget.
+	//
+	// Two consequences worth knowing before declaring one:
+	//
+	//   - A reader is NOT a member of this group, so the team's own folder stays
+	//     closed to them. Reaching it through the view is the only way in, and
+	//     failing to make the view denies access rather than granting it.
+	//   - The mapping's destination is the reader's gid, so a file on disk owned
+	//     BY the reader group is not visible through the view. Nothing chgrps to
+	//     a reader group, and nothing should.
 	//
 	// This does NOT reopen the self-service-sharing non-goal. That was refused
 	// for the group explosion of granting arbitrary user sets access to
 	// arbitrary folders — O(2^n). A reader group per team is O(teams): a second
 	// named axis on a team that already exists, not an arbitrary combination.
-	//
-	// Enforcement needs POSIX ACLs, which not every filesystem stores. Where the
-	// backend cannot, apply REFUSES rather than declaring a reader whose access
-	// nothing enforces — a folder that looks read-restricted and is not is worse
-	// than an error at apply time.
 	Readers []string `yaml:"readers,omitempty"`
 
 	// Anonymous opens this group's folder to unauthenticated web visitors. See

@@ -192,11 +192,11 @@ func details(a reconcile.Action) string {
 		parts = append(parts, "groups=["+strings.Join(a.Groups, ",")+"]")
 	}
 	if a.Kind == reconcile.SetGroupReaders {
-		gids := make([]string, len(a.ReaderGIDs))
-		for i, g := range a.ReaderGIDs {
-			gids[i] = fmt.Sprintf("%d", g)
+		rs := make([]string, len(a.Readers))
+		for i, r := range a.Readers {
+			rs[i] = fmt.Sprintf("%s(%d)", r.Name, r.GID)
 		}
-		parts = append(parts, "readers=["+strings.Join(gids, ",")+"]")
+		parts = append(parts, "readers=["+strings.Join(rs, ",")+"]")
 	}
 	if a.Kind == reconcile.SetUserQuota {
 		parts = append(parts, fmt.Sprintf("quota=%d", a.QuotaBytes))

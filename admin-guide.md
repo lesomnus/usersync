@@ -39,6 +39,11 @@ usersync를 실제로 돌리는 곳(호스트든 컨테이너든)에는 **shadow
 samba-common-bin이 이미 있어야 하고 root여야 한다.** 계정을 만드는 것은 usersync가 아니라
 그 도구들이고, usersync는 선언에 맞게 그것들을 호출할 뿐이다.
 
+roster에 `readers`를 쓴다면 여기에 두 가지가 더 필요하다 — **`mount`(util-linux 2.39+,
+`X-mount.idmap` 지원)와 `CAP_SYS_ADMIN`**(컨테이너면 `privileged: true`). 읽기 전용 그룹은
+파일에 쓰는 권한이 아니라 **마운트**이기 때문이다(§3.2b). 없으면 `apply`가 그 액션에서
+실패하고, reader는 접근을 얻지 못한다 — 조용히 넓어지는 쪽이 아니라 막히는 쪽으로 틀린다.
+
 ### 1.2 시드 생성 (초기 비번 파생용)
 초기 SMB 비번은 시드에서 **결정적으로 파생**된다. 시드는 roster에 넣지 않고 별도 파일/환경변수로 준다.
 ```sh
@@ -134,6 +139,37 @@ sudo ./usersync apply              # 그룹 생성+폴더(2770 setgid), 보조�
 sudo ./usersync shares --write --reload   # (선택) smb.conf에 [team-b] 공유 자동 추가
 ```
 > `users[].groups`는 **치환**이다(추가 아님). roster에 적힌 집합이 곧 그 사용자의 전체 보조그룹.
+
+### 3.2b 읽기 전용 그룹 (`readers`)
+다른 팀에게 **읽기만** 열고 싶을 때. 짝이 되는 그룹을 하나 만들고 `readers`에 적는다.
+```yaml
+groups:
+  - { name: team-a, gid: 10001, readers: [team-a-ro] }
+  - { name: team-a-ro, gid: 10011 }      # 평범한 그룹. 사람은 users[].groups로 넣는다
+```
+```sh
+sudo ./usersync apply
+./usersync explain team-a               # 누가 읽을 수 있고, 뷰가 실제로 떠 있는지
+```
+
+권한은 **파일에 쓰이지 않는다.** reader 그룹의 자기 폴더 안에 팀 폴더를 읽기 전용·idmapped
+로 bind 한다:
+```
+디스크   <groups>/team-a              root:team-a  2770 / 0660   ← 그대로
+뷰       <groups>/team-a-ro/team-a    ro, team-a 의 gid 가 team-a-ro 로 보인다
+```
+그래서 reader 는 평범한 그룹 모드 비트로 읽고, 쓰기는 커널이 `EROFS` 로 막는다. 판정이
+커널이므로 **웹과 SMB 가 따로 설정 없이 일치**하고, `smb.conf` 는 한 줄도 안 바뀐다 —
+reader 그룹의 기존 공유가 그 뷰를 이미 서빙한다.
+
+알아둘 것:
+- reader 는 팀 그룹 **구성원이 아니다.** 팀 폴더 직접 경로는 계속 막혀 있고, 뷰가 없으면
+  그냥 못 읽는다(실수해도 넓어지지 않는다).
+- 마운트는 **마운트 네임스페이스 소속**이라 데이터를 서빙하는 컨테이너마다 각자 만든다.
+  그래서 `apply --nss-only` 도 이 액션만은 건너뛰지 않는다.
+- **재부팅하면 사라지고, 사라져도 된다.** `apply` 가 상수 시간에 다시 만든다.
+- reader 그룹이 **소유한** 파일은 그 뷰에서 안 보인다(매핑의 도착지는 출발지가 될 수 없다).
+  reader 그룹으로 `chgrp` 하지 않으면 된다.
 
 ### 3.3 오프보딩 (퇴사·휴직) — 데이터 보존, UID 예약
 **항목을 지우지 말고 `status`만 바꾼다.** 지우면 uid 예약이 풀려 나중에 재사용→파일 오소유 사고가 난다.
@@ -258,6 +294,9 @@ smbd profiling level = count      # 디렉터리 순회(readdir) 카운터 — f
 - **`... out of manage scope`로 거부됨** — 그 uid/gid가 `manage` 창 밖. 값을 고치거나, 무시하려면 `on_out_of_scope: skip`(또는 `--skip-out-of-scope`). 단 `< system_floor`/`protect`는 플래그로도 못 통과.
 - **`duplicate uid`** — 다른(은퇴 포함) 항목이 같은 uid를 이미 점유. uid는 재사용 불가.
 - **SMB 상태가 안 보임(비-root export)** — `pdbedit`는 root 필요. 비-root `export`는 유저/그룹만 출력하고 SMB 상태는 경고 후 생략한다.
+- **reader 가 못 읽는다** — `usersync explain <팀>` 을 **그 서비스를 돌리는 컨테이너 안에서** 실행한다. 뷰는 마운트 네임스페이스 소속이라 밖에서 보면 원래 안 보인다. `NOT MOUNTED` 면 그 파드에서 `apply`(`--nss-only` 여도 된다)를 한 번 돌리면 된다.
+- **`mount read-only view ...: operation not permitted`** — `CAP_SYS_ADMIN` 이 없다. 컨테이너면 `privileged: true`.
+- **`refusing to mount a read-only view over ...: the directory is not empty`** — reader 그룹 폴더 안에 팀과 **같은 이름의 진짜 디렉터리**가 이미 있다. 마운트하면 그게 가려지므로 거부한다. 옮기거나 이름을 바꾼다.
 - **provider 자동탐지 실패** — `provider: auto`가 `useradd`→`adduser`→`pw` 순으로 찾는다. 없으면 `provider:`로 명시.
 - **`refusing to apply: mode is "audit"`** — 설정이 계정 소유권을 디렉터리 서비스에 넘긴 상태(§3.7). 의도한 것이면 `usersync audit`을 쓰고, 소유권을 되찾으려면 `usersync.yaml`의 `mode`를 `manage`로 되돌린다.
 

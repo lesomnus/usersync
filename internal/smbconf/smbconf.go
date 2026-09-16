@@ -78,28 +78,13 @@ func Render(groups []roster.Group, homeBase, groupsBase string) string {
 		case roster.AnonNone:
 			// Private team share: only members connect; the folder's mode does the
 			// rest. Non-members are turned away at the share, not just at the file.
-			if len(g.Readers) == 0 {
-				fmt.Fprintf(&b, "   valid users = @%s\n", name)
-			} else {
-				// Reader groups (roster.Group.Readers) mount read-only: they join
-				// `valid users` so smbd lets them connect at all, and `read list`
-				// forces them read-only even though the share is writable for the
-				// team. The folder's POSIX ACL — set by fsops for these same groups
-				// — is what actually grants the read at the filesystem; this is only
-				// the SMB gate that lets them reach it (web read needs no share
-				// change). Sorted so the config is stable regardless of roster order.
-				rs := append([]string(nil), g.Readers...)
-				sort.Strings(rs)
-				valid := "@" + name
-				var readList strings.Builder
-				for _, r := range rs {
-					rn := oneLine(r)
-					valid += " @" + rn
-					fmt.Fprintf(&readList, " @%s", rn)
-				}
-				fmt.Fprintf(&b, "   valid users = %s\n", valid)
-				fmt.Fprintf(&b, "   read list =%s\n", readList.String())
-			}
+			//
+			// Reader groups are deliberately NOT admitted here. A reader reaches
+			// this folder through a read-only view mounted inside their own group
+			// folder, which their own share already serves — so the team's share
+			// stays exactly what its name says, and the read-only half is enforced
+			// by the kernel rather than by `read list`, over SMB and the web alike.
+			fmt.Fprintf(&b, "   valid users = @%s\n", name)
 		default:
 			// Anonymous (read or write): ANY roster user may mount and read, so the
 			// share is not gated to the team — the open "other" mode bits on the
@@ -150,17 +135,6 @@ func Render(groups []roster.Group, homeBase, groupsBase string) string {
 			b.WriteString("   directory mask = 2770\n")
 			b.WriteString("   force directory mode = 2770\n")
 		}
-		// A file created over SMB must inherit the folder's default POSIX ACL, so
-		// a reader group declared on the team (roster.Group.Readers) can read what
-		// somebody uploads through the explorer, exactly as it can read what the
-		// web path writes. With this off, whether the inherited entry survives is
-		// left to the filesystem; with it on, Samba is told to preserve it. It is
-		// harmless where the create mask already keeps the entry effective and
-		// necessary where it would not — so it is set unconditionally, because the
-		// safe default costs nothing and a team gains a reader without the share
-		// being regenerated. Measure against the deployment's smbd at cutover; see
-		// scripts/verify-samba-modes.sh.
-		b.WriteString("   inherit acls = yes\n")
 	}
 
 	b.WriteString(EndMarker + "\n")

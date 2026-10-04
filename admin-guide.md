@@ -267,6 +267,16 @@ smbd profiling level = count      # 디렉터리 순회(readdir) 카운터 — f
 
 > `lock directory`를 옮기면 `smbstatus`(주소→계정 매핑)와 profiling tdb가 컨테이너 밖에서 읽힌다 — 모니터링을 붙이려고 smbd를 재시작(=사이드카 추가)할 필요가 없어진다.
 
+### 4.2 계정 캐시 — 재시작을 짧게 (`USERSYNC_ACCOUNTS_DIR`)
+
+컨테이너의 `/etc/passwd`·`group`·`shadow`·`gshadow`는 이미지 파일이라, 캐시가 없으면 **재시작할 때마다 roster의 모든 계정을 처음부터 다시 만든다**(사용자마다 groupadd·useradd·usermod -G·usermod -L·smbpasswd -e, 약 0.2초씩). 그동안 smbd가 뜨지 않으므로 이 시간이 곧 SMB가 끊기는 시간이다.
+
+- `USERSYNC_ACCOUNTS_DIR`에 **재시작을 넘어 남는 디렉터리**(hostPath·PVC)를 주면, 엔트리포인트가 usersync가 만든 항목(이미지에 없는 이름)을 그곳에 저장한다. 다음 시작 때 `apply` 전에 `/etc`로 되돌려 놓는다. 저장은 첫 `apply` 직후에 하고, 그 뒤로는 `watch`가 바꾼 것을 10초마다 따라간다.
+- 실측(같은 이미지, 사용자 82·그룹 27, 4 CPU): 캐시가 없을 때 smbd까지 **17.3초**, 캐시를 되돌렸을 때 **0.1초**(roster 변경 없음), **0.4초**(1명 추가·1명 제거).
+- **캐시일 뿐 정본이 아니다.** `apply`는 여전히 roster에 맞춘다. 낡거나 빠진 캐시는 시간만 더 들고, 형식이 깨진 캐시는 통째로 무시한다(경고 후 처음부터 만든다). roster에서 빠진 사용자는 `/etc`가 남는 일반 호스트와 똑같이 orphan으로 남고 SMB가 비활성된다(§5 삭제 없음).
+- 이름이 겹치면 **이미지 쪽이 이긴다** — 이미지가 바뀌며 시스템 계정이 달라져도 낡은 캐시가 덮지 않는다.
+- 네 파일을 호스트에서 **파일 단위로 바인드 마운트하면 안 된다.** shadow-utils는 `<파일>+`를 쓰고 원본 위로 rename하는데, 바인드 마운트된 파일 위로는 rename이 실패한다(`groupadd: failure while writing changes to /etc/group`). 그래서 이후의 모든 계정 변경이 깨진다. 캐시는 디렉터리 안의 일반 파일이다.
+
 ---
 
 ## 5. 안전 규칙 (반드시 숙지)

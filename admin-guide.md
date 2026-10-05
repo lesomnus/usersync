@@ -276,6 +276,23 @@ smbd profiling level = count      # 디렉터리 순회(readdir) 카운터 — f
 - **캐시일 뿐 정본이 아니다.** `apply`는 여전히 roster에 맞춘다. 낡거나 빠진 캐시는 시간만 더 들고, 형식이 깨진 캐시는 통째로 무시한다(경고 후 처음부터 만든다). roster에서 빠진 사용자는 `/etc`가 남는 일반 호스트와 똑같이 orphan으로 남고 SMB가 비활성된다(§5 삭제 없음).
 - 이름이 겹치면 **이미지 쪽이 이긴다** — 이미지가 바뀌며 시스템 계정이 달라져도 낡은 캐시가 덮지 않는다.
 - 네 파일을 호스트에서 **파일 단위로 바인드 마운트하면 안 된다.** shadow-utils는 `<파일>+`를 쓰고 원본 위로 rename하는데, 바인드 마운트된 파일 위로는 rename이 실패한다(`groupadd: failure while writing changes to /etc/group`). 그래서 이후의 모든 계정 변경이 깨진다. 캐시는 디렉터리 안의 일반 파일이다.
+- 캐시 코드는 `deploy/accounts-cache.sh`에 있다. 시작 때 `usersync apply`를 도는 다른 이미지(darak 웹)도 같은 파일을 쓴다. **컨테이너 역할마다 디렉터리를 따로** 준다 — 계정 집합이 다른 두 컨테이너가 한 디렉터리를 쓰면 서로의 항목을 되돌려 놓는다.
+
+### 4.3 넘겨받기 — 업데이트 때 445가 닫히는 시간을 0.1초 아래로 (`SMB_HANDOFF=1`)
+
+캐시가 있어도 `Recreate`는 옛 파드가 끝난 **뒤에** 새 파드를 만든다. 그래서 445는 컨테이너 생성·이미지 받기·기동만큼 닫힌다(캐시가 있을 때 ~1초, 새 이미지면 받는 시간이 더해진다).
+
+`SMB_HANDOFF=1`이면 새 파드가 옛 파드 **옆에** 떠서, 시간이 걸리는 일(이미지 받기, 계정 apply, 공유, winbindd)을 옛 smbd가 아직 서비스하는 동안 끝낸다. 그다음 "준비됨"을 알리고, 옛 smbd가 139·445를 놓는 순간 smbd를 띄운다.
+
+- **필요한 배포 설정:**
+  - `strategy: RollingUpdate`, `maxSurge: 1`, `maxUnavailable: 0`.
+  - 컨테이너에 **`ports:`를 적지 않는다.** hostNetwork에서 `containerPort`는 hostPort가 되어, 스케줄러가 같은 노드에 두 번째 파드를 놓지 않는다.
+  - 프로브는 `smb-probe ready`(startup·readiness), `smb-probe live`(liveness)를 exec로 부른다. tcpSocket 445는 "아직 넘겨받기 전"과 "smbd가 죽었다"를 가르지 못한다. 그리고 앞의 상태에서 readiness가 **통과해야** 쿠버네티스가 옛 파드를 멈춘다.
+  - 노드에 파드 두 개의 request가 잠깐 함께 들어갈 자리가 있어야 한다. 없으면 새 파드가 Pending으로 남고, 옛 파드가 계속 서비스한다(끊기지는 않는다).
+- **실측**(yoko, 사용자 82·그룹 27, `rollout restart` 세 번, 노드에서 10ms 간격으로 LISTEN 을 봄): 445가 닫힌 시간 **28·67·68ms**. smbd 자체 기동은 0.07~0.08초다.
+- **겹치는 몇 초 동안** 두 파드가 같은 tdbsam·폴더·quota에 적용할 수 있다. 실행 잠금(`/run/usersync.lock`)이 파드마다 따로라 서로 막지 않는다. 그러나 둘 다 같은 roster로 수렴하는 멱등 작업이고, 그 사이에 roster가 바뀔 때만 겹친다.
+- **열린 파일은 여전히 끊긴다.** Samba는 persistent handle이 없어서, 클라이언트가 다시 연결하고 다시 연다. 넘겨받기는 그 틈을 줄일 뿐이다.
+- 노드가 재부팅되는 경우처럼 옛 파드가 없으면 포트가 비어 있으므로 바로 smbd를 띄운다. `SMB_HANDOFF`가 없으면 지금까지처럼 바로 띄운다.
 
 ---
 

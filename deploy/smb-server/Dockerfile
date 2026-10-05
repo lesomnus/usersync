@@ -60,7 +60,11 @@ RUN ( [ -f /etc/apt/sources.list.d/debian.sources ] \
 
 COPY --from=build /usersync /usr/local/bin/usersync
 COPY deploy/smb-server/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0755 /usr/local/bin/usersync /usr/local/bin/entrypoint.sh
+# The probes the Deployment calls (exec) — see probe.sh for why not tcpSocket.
+COPY deploy/smb-server/probe.sh /usr/local/bin/smb-probe
+# The account cache, sourced by the entrypoint (shared with darak's web image).
+COPY deploy/accounts-cache.sh /usr/local/lib/usersync/accounts-cache.sh
+RUN chmod 0755 /usr/local/bin/usersync /usr/local/bin/entrypoint.sh /usr/local/bin/smb-probe
 
 # 445 SMB. With host networking it is not published; it is the host's own port.
 EXPOSE 445

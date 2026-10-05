@@ -92,90 +92,11 @@ fi
 
 # --- account cache ------------------------------------------------------------
 #
-# The container's /etc/passwd, group, shadow and gshadow are image files, so
-# every start used to find ALL roster accounts missing and create them one by
-# one: groupadd + useradd + usermod -G + usermod -L + smbpasswd -e per user,
-# ~0.2 s each. With 82 users that was 16 s of a 17 s restart, during which
-# nothing listens on 445 (measured 2026-10-05; smbd itself starts in 0.3 s).
-#
-# So the entries usersync made are kept in ACCOUNTS_DIR (a persistent volume)
-# and merged back into /etc before `apply`. Then a restart's apply finds the
-# accounts present and only does what the roster changed.
-#
-# It is a CACHE, not a second source of truth: `apply` still reconciles
-# against the roster, so a stale or partial copy only costs time — a missing
-# account is created, a wrong membership is corrected, an account the roster
-# dropped is disabled exactly as on a host whose /etc persists (which is what
-# usersync was written for).
-#
-# Why not mount the four files straight from the host: shadow-utils writes
-# `<file>+` and rename()s it over the original, and a rename onto a bind-mounted
-# file fails — `groupadd: failure while writing changes to /etc/group`. So every
-# later account change would break. The cache is plain files in a directory.
-ACCOUNT_FILES=(passwd group shadow gshadow)
-IMAGE_ACCOUNTS=/run/usersync/image-accounts # the image's own entries, as shipped
-
-# Only entries the image does not ship are cached and restored, and the image
-# wins on a name clash — so an image update can change its system accounts
-# without a stale copy overriding them.
-snapshot_image_accounts() {
-	install -d -m 0700 "$IMAGE_ACCOUNTS"
-	local f
-	for f in "${ACCOUNT_FILES[@]}"; do cp -a "/etc/$f" "$IMAGE_ACCOUNTS/$f"; done
-}
-
-# fields per line: passwd 7, group 4, shadow 9, gshadow 4
-account_fields() {
-	case $1 in passwd) echo 7 ;; group | gshadow) echo 4 ;; shadow) echo 9 ;; esac
-}
-
-restore_accounts() {
-	[[ -n $ACCOUNTS_DIR ]] || return 0
-	local f tmp n
-	for f in "${ACCOUNT_FILES[@]}"; do
-		if [[ ! -f $ACCOUNTS_DIR/$f ]]; then
-			log "account cache: empty — creating every account (first start)"
-			return 0
-		fi
-	done
-	tmp=$(mktemp -d)
-	for f in "${ACCOUNT_FILES[@]}"; do
-		# A malformed cache is ignored as a whole, never half-applied.
-		if ! awk -F: -v n="$(account_fields "$f")" 'NF != n || $1 == "" { bad = 1 } END { exit bad }' "$ACCOUNTS_DIR/$f"; then
-			echo "WARNING: account cache $ACCOUNTS_DIR/$f is malformed; ignoring the cache" >&2
-			rm -rf "$tmp"
-			return 0
-		fi
-		awk -F: 'NR == FNR { seen[$1] = 1; print; next } !($1 in seen)' "/etc/$f" "$ACCOUNTS_DIR/$f" >"$tmp/$f"
-	done
-	# `cat >` rather than mv: keeps each file's owner and mode (shadow is root:shadow 0640).
-	for f in "${ACCOUNT_FILES[@]}"; do cat "$tmp/$f" >"/etc/$f"; done
-	rm -rf "$tmp"
-	n=$(awk -F: 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$IMAGE_ACCOUNTS/passwd" /etc/passwd | wc -l)
-	log "account cache: restored $n accounts"
-}
-
-save_accounts() {
-	[[ -n $ACCOUNTS_DIR ]] || return 0
-	local f
-	# shadow-utils holds <file>.lock while it rewrites; a copy taken then could
-	# pair a new passwd with an old shadow. Skip and catch it on the next pass.
-	for f in "${ACCOUNT_FILES[@]}"; do [[ -e /etc/$f.lock ]] && return 0; done
-	for f in "${ACCOUNT_FILES[@]}"; do
-		awk -F: 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$IMAGE_ACCOUNTS/$f" "/etc/$f" >"$ACCOUNTS_DIR/.$f.new" || return 0
-		if cmp -s "$ACCOUNTS_DIR/.$f.new" "$ACCOUNTS_DIR/$f"; then
-			rm -f "$ACCOUNTS_DIR/.$f.new"
-		else
-			mv -f "$ACCOUNTS_DIR/.$f.new" "$ACCOUNTS_DIR/$f"
-		fi
-	done
-}
-
-if [[ -n $ACCOUNTS_DIR ]]; then
-	install -d -m 0700 "$ACCOUNTS_DIR"
-	snapshot_image_accounts
-	restore_accounts
-fi
+# Restarts used to recreate every account from scratch (16 s of a 17 s restart
+# with 82 users). ACCOUNTS_DIR keeps them; deploy/accounts-cache.sh has the why.
+# shellcheck source=deploy/accounts-cache.sh
+source /usr/local/lib/usersync/accounts-cache.sh
+accounts_cache_init
 
 # --- accounts + shares ------------------------------------------------------
 #
@@ -228,18 +149,78 @@ check_audit_ops() {
 check_audit_ops
 
 # --- serve ------------------------------------------------------------------
-log "winbindd + smbd"
-winbindd -D
-smbd -D
+#
+# Two ways to come up, chosen by SMB_HANDOFF:
+#
+#   unset  start smbd now. Under Recreate the old pod is already gone, so the
+#          ports are free; 445 is closed from the old pod's exit until here —
+#          ~1 s with the account cache.
+#   1      the hand-off. The new pod starts NEXT TO the old one (RollingUpdate,
+#          maxSurge 1) and does everything that takes time — image pull, account
+#          apply, shares, winbindd — while the old smbd still serves. Then it says
+#          "prepared" (the readiness probe), Kubernetes stops the old pod, and
+#          the moment the old smbd lets go of 139/445 this one starts smbd. 445 is
+#          closed only for smbd's own start.
+#
+# Either way, open files are not carried over: Samba has no persistent handles,
+# so a client reconnects and reopens. The hand-off shortens the gap, not that.
+#
+# The probes read the state this leaves in STATE_DIR (see probe.sh):
+#   prepared  everything but smbd is ready — the old pod may be stopped now
+#   serving   this pod's smbd took 445; from here 445 must stay open
+STATE_DIR=/run/usersync
+install -d -m 0755 "$STATE_DIR"
+rm -f "$STATE_DIR/prepared" "$STATE_DIR/serving"
+
+# Is anything listening on the given ports (hex)? Read from /proc/net: this pod is
+# on the host network, so the old pod's smbd shows there too. No ss in the image.
+listening() {
+	local files=() f
+	for f in /proc/net/tcp /proc/net/tcp6; do [[ -r $f ]] && files+=("$f"); done
+	awk -v ports="$*" '
+		BEGIN { n = split(ports, p, " "); for (i = 1; i <= n; i++) want[":" p[i]] = 1 }
+		FNR > 1 && $4 == "0A" { a = $2; sub(/^[^:]*/, "", a); if (a in want) found = 1 }
+		END { exit !found }' "${files[@]}"
+}
+SMB_PORTS="01BD 008B" # 445 and 139 — smbd binds both (`smb ports` default)
 
 # ntlm_auth is a winbind client even on a standalone server, and darak's web
 # logins go through it — so wait for winbindd here, where a not-ready is one
-# clear line, instead of at the first login as a helper error.
+# clear line, instead of at the first login as a helper error. winbindd's socket
+# is in this pod's /run/samba, so it runs next to the old pod's without a clash.
+log "winbindd"
+winbindd -D
 for _ in $(seq 100); do
 	wbinfo -p >/dev/null 2>&1 && break
 	sleep 0.2
 done
 wbinfo -p >/dev/null 2>&1 || die "winbindd did not become ready; web logins would all fail"
+
+touch "$STATE_DIR/prepared"
+if [[ ${SMB_HANDOFF:-} == 1 ]] && listening $SMB_PORTS; then
+	log "hand-off: prepared; waiting for the old smbd to release 139/445"
+	waited=0
+	while listening $SMB_PORTS; do
+		sleep 0.05
+		waited=$((waited + 1))
+		# Nothing stops the old pod but Kubernetes, once this one is Ready. Say so
+		# now and then rather than wait silently if that never comes.
+		if ((waited % 600 == 0)); then
+			log "hand-off: still waiting ($((waited / 20)) s) — is the old pod being stopped?"
+		fi
+	done
+fi
+
+log "smbd"
+started=$(date +%s.%N)
+smbd -D
+for _ in $(seq 200); do
+	listening 01BD && break
+	sleep 0.05
+done
+listening 01BD || die "smbd did not open 445"
+log "smbd: 445 open $(awk -v a="$started" -v b="$(date +%s.%N)" 'BEGIN { printf "%.2f", b - a }') s after start"
+touch "$STATE_DIR/serving"
 
 # In audit mode usersync must not apply, and `watch` refuses a non-manage mode
 # anyway — so there is nothing for it to reconcile. Keep the server up without it.
@@ -252,11 +233,7 @@ fi
 # and winbindd are daemonized alongside it, exactly as in the single-container
 # image before the split — so they are orphans, and PID 1 (tini, see the
 # Dockerfile) is what reaps them and their helpers.
-# Keep the account cache in step with what `watch` applies. It polls rather
-# than hooking into watch: a change missed here is only a slower next start.
-if [[ -n $ACCOUNTS_DIR ]]; then
-	(while sleep 10; do save_accounts || true; done) &
-fi
+accounts_cache_follow
 
 log "usersync watch --reload-smb"
 exec usersync watch --reload-smb

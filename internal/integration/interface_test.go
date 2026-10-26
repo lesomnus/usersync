@@ -74,9 +74,15 @@ users:
 //   - `members` of an `all` group is the resolved cohort: active users of that
 //     profile only (not jlee, disabled; not intern1, profile intern);
 //   - list fields are `[]`, never `null`;
-//   - `quota` is present only when a limit applies, and 0 is a limit.
+//   - `quota` is present only when a limit applies, and 0 is a limit;
+//   - `paths` are the configured bases, and `views` is readers inverted: on
+//     team-a-ro, the team it may read and the path apply mounts that view at.
 const wantRoster = `{
   "schema": 1,
+  "paths": {
+    "home": "/srv/data/homes",
+    "groups": "/srv/data/teams"
+  },
   "groups": [
     {
       "name": "team-a",
@@ -88,6 +94,7 @@ const wantRoster = `{
       "readers": [
         "team-a-ro"
       ],
+      "views": [],
       "members": [
         "skim",
         "jlee"
@@ -99,6 +106,12 @@ const wantRoster = `{
       "gid": 10002,
       "owners": [],
       "readers": [],
+      "views": [
+        {
+          "team": "team-a",
+          "path": "/srv/data/teams/team-a-ro/team-a"
+        }
+      ],
       "members": [
         "intern1"
       ],
@@ -109,6 +122,7 @@ const wantRoster = `{
       "gid": 10003,
       "owners": [],
       "readers": [],
+      "views": [],
       "members": [
         "skim"
       ],
@@ -120,6 +134,7 @@ const wantRoster = `{
       "gid": 19999,
       "owners": [],
       "readers": [],
+      "views": [],
       "members": [],
       "anonymous": "read"
     }

@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"sort"
 
+	"github.com/lesomnus/usersync/internal/fsops"
 	"github.com/lesomnus/usersync/internal/roster"
 	"github.com/lesomnus/xli"
 )
@@ -45,7 +47,7 @@ func NewCmdRoster() *xli.Command {
 
 			enc := json.NewEncoder(cmd)
 			enc.SetIndent("", "  ")
-			return enc.Encode(newRosterView(ro))
+			return enc.Encode(newRosterView(ro, c.Paths.Home, c.Paths.Groups))
 		}),
 	}
 }
@@ -62,9 +64,26 @@ type rosterView struct {
 	// Schema is the version of this shape. A consumer that finds a number it does
 	// not know should refuse rather than guess, because the change that bumped it
 	// was by definition one an old reader would misread.
-	Schema int         `json:"schema"`
+	Schema int `json:"schema"`
+	// Paths are this installation's bases, as configured. A consumer that serves
+	// files learns where homes and team folders are from here rather than from a
+	// constant of its own.
+	Paths  pathsView   `json:"paths"`
 	Groups []groupView `json:"groups"`
 	Users  []userView  `json:"users"`
+}
+
+type pathsView struct {
+	Home   string `json:"home"`
+	Groups string `json:"groups"`
+}
+
+// viewEntry is one read-only view a group holds: the team it shows, and where
+// apply mounts it. The path is usersync's to decide (docs/interface.md 1.1), so a
+// consumer opens it as given and never builds it.
+type viewEntry struct {
+	Team string `json:"team"`
+	Path string `json:"path"`
 }
 
 // rosterSchema is the current rosterView.Schema. See docs/interface.md before
@@ -77,8 +96,12 @@ type groupView struct {
 	Description string   `json:"description,omitempty"`
 	Owners      []string `json:"owners"`
 	Readers     []string `json:"readers"`
-	Members     []string `json:"members"`
-	All         bool     `json:"all,omitempty"`
+	// Views is the other side of Readers: the teams THIS group may read, each
+	// with the path of its view. Readers says who may read a folder; Views says
+	// where a member of this group finds what they may read.
+	Views   []viewEntry `json:"views"`
+	Members []string    `json:"members"`
+	All     bool        `json:"all,omitempty"`
 	// Anonymous is the folder's unauthenticated-access level: "none", "read", or
 	// "write". darak reads this to decide which folders to show anonymous
 	// visitors and whether the anonymous helper may write.
@@ -94,8 +117,14 @@ type userView struct {
 	Quota    *uint64 `json:"quota,omitempty"` // byte limit (resolved from profile); null = unlimited
 }
 
-func newRosterView(ro *roster.Roster) rosterView {
-	v := rosterView{Schema: rosterSchema, Groups: []groupView{}, Users: []userView{}}
+func newRosterView(ro *roster.Roster, homeBase, groupsBase string) rosterView {
+	v := rosterView{
+		Schema: rosterSchema,
+		Paths:  pathsView{Home: homeBase, Groups: groupsBase},
+		Groups: []groupView{},
+		Users:  []userView{},
+	}
+	views := viewsByReader(ro, groupsBase)
 	for _, g := range ro.Groups {
 		v.Groups = append(v.Groups, groupView{
 			Name:        g.Name,
@@ -103,6 +132,7 @@ func newRosterView(ro *roster.Roster) rosterView {
 			Description: g.Description,
 			Owners:      nonNilStrings(g.Owners),
 			Readers:     nonNilStrings(g.Readers),
+			Views:       nonNilViews(views[g.Name]),
 			// Resolved: for an `all` group this is the concrete cohort (every active
 			// user, or the profile's cohort), so a consumer reads one member list and
 			// never expands `all` itself. `all` stays a display hint below.
@@ -124,6 +154,29 @@ func newRosterView(ro *roster.Roster) rosterView {
 			uv.Quota = &b
 		}
 		v.Users = append(v.Users, uv)
+	}
+	return v
+}
+
+// viewsByReader inverts readers: for each reader group, the teams it may read
+// and where each view is mounted, sorted by team. It is computed from the
+// declaration with the same ViewPath apply mounts at, so the two cannot disagree.
+func viewsByReader(ro *roster.Roster, groupsBase string) map[string][]viewEntry {
+	out := map[string][]viewEntry{}
+	for _, t := range ro.Groups {
+		for _, r := range t.Readers {
+			out[r] = append(out[r], viewEntry{Team: t.Name, Path: fsops.ViewPath(groupsBase, t.Name, r)})
+		}
+	}
+	for r := range out {
+		sort.Slice(out[r], func(i, j int) bool { return out[r][i].Team < out[r][j].Team })
+	}
+	return out
+}
+
+func nonNilViews(v []viewEntry) []viewEntry {
+	if v == nil {
+		return []viewEntry{}
 	}
 	return v
 }

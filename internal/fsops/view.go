@@ -191,6 +191,19 @@ func (o OS) EnsureReaderViews(groupsBase, team string, teamGID uint32, readers [
 		if !ok || t != team {
 			continue
 		}
+		// A view is a read-only idmapped mount, and only that: the same test
+		// ReadReaderViews uses to say what is granted. A path that merely has the
+		// shape <groups>/<X>/<team> can be anything — a dataset somebody mounted in
+		// a team folder under a name that happens to be a team's — and taking it
+		// down because of its name would unmount data that was never ours. It is
+		// left alone; if it sits exactly where a declared view must go, the grant
+		// is refused rather than mounted over it.
+		if !isReadOnlyIdmapped(m.opts) {
+			if _, declared := want[reader]; declared {
+				return fmt.Errorf("refusing to make the view %s: something that is not a read-only id-mapped view is mounted there", m.point)
+			}
+			continue
+		}
 		if _, keep := want[reader]; keep {
 			mounted[reader] = true
 			continue
@@ -279,11 +292,29 @@ func ensureMountpoint(point string) error {
 		if len(entries) > 0 {
 			return fmt.Errorf("refusing to mount a read-only view over %s: the directory is not empty", point)
 		}
+		// An empty directory is taken only if it is one of ours: root-owned and
+		// viewMode, which is what this function leaves behind (a view that was
+		// unmounted, or a run that stopped between here and the mount). Anything
+		// else was made by a person in their group's folder, and taking it would
+		// turn their folder into a root-owned mountpoint and, at revocation,
+		// delete it.
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok || st.Uid != 0 || fi.Mode().Perm() != viewMode {
+			return fmt.Errorf("refusing to mount a read-only view over %s: an empty directory that usersync did not make is there (owner uid %d, mode %04o) — rename or remove it", point, statUID(st), fi.Mode().Perm())
+		}
 	}
 	if err := os.Chown(point, 0, 0); err != nil {
 		return err
 	}
 	return os.Chmod(point, viewMode)
+}
+
+// statUID is the owner of st for an error message, or -1 when it is unknown.
+func statUID(st *syscall.Stat_t) int64 {
+	if st == nil {
+		return -1
+	}
+	return int64(st.Uid)
 }
 
 // unmountView takes a view down, lazily if it is busy. A lazy detach still

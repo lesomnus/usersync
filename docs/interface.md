@@ -58,12 +58,19 @@ the files:
   appear owned by `r`'s gid, so a reader reads with ordinary mode bits. Every
   write is refused by the kernel with `EROFS`.
 - **The mountpoint** is an empty, root-owned `0555` directory that usersync
-  creates. usersync refuses to mount over a non-empty directory.
+  creates. usersync refuses to mount over a non-empty directory. It also refuses
+  an empty one that it did not make (not root-owned `0555`), because that folder
+  is somebody's in the reader group's folder.
+- **A view is identified by the mount, not the path.** Only a read-only
+  id-mapped mount at `<groups>/<r>/<t>` counts as a view. Any other mount with
+  that shape is left alone. If one sits where a declared view must go, the grant
+  is refused rather than mounted over it.
 - **Revocation** is the unmount. The mount table is the only record, so a reader
   removed from the roster is revoked at the next apply.
 
-A consumer that serves files as the user, as darak does, must open
-`<groups>/<r>/<t>/…` for a reader of `t` who is not a member of `t`. Opening
+A consumer that serves files as the user, as darak does, must open the view for
+a reader of `t` who is not a member of `t`. It takes the view's path from
+`roster`'s `views` (section 3) rather than building it. Opening
 `<groups>/<t>/…` instead fails closed (`EACCES`). It cannot grant anything.
 
 **Constraint:** a group whose folder holds views (a group that is someone's
@@ -98,16 +105,18 @@ An authorization decision should rest on this output: it is what an operator
 reviewed and committed.
 
 ```json
-{ "schema": 1, "groups": [ … ], "users": [ … ] }
+{ "schema": 1, "paths": { "home": "…", "groups": "…" }, "groups": [ … ], "users": [ … ] }
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
 | `schema` | int | Version of this shape. Currently `1`. Refuse a number you do not know. |
+| `paths.home` / `paths.groups` | string | the configured bases (`<home>`, `<groups>` above) |
 | `groups[].name` / `gid` | string / uint32 | |
 | `groups[].description` | string, omitted if empty | display only |
 | `groups[].owners` | string[] | users who may change the membership |
-| `groups[].readers` | string[] | groups granted a read-only view (1.1), **as declared** |
+| `groups[].readers` | string[] | groups granted a read-only view of this group's folder (1.1), **as declared** |
+| `groups[].views` | `{team, path}[]` | the other side: the teams **this** group may read, sorted by team, each with the absolute path apply mounts its view at. A consumer opens `path` as given. |
 | `groups[].members` | string[] | for an ordinary group, as declared (a disabled user is still listed). For an `all` group, the **resolved cohort**: active users of that profile. A consumer never expands `all` itself. |
 | `groups[].all` | bool, omitted if false | a display hint that `members` is a cohort |
 | `groups[].anonymous` | `"none"` \| `"read"` \| `"write"` | unauthenticated (web) access to the folder |
@@ -165,10 +174,10 @@ needs only the seed (`--seed-file` or `USERSYNC_SEED`).
 
 ## Known gaps
 
-- **darak recomputes the view path.** It knows `<groups>/<reader>/<team>` and the
-  folder name `teams` from its own code (`internal/admin/views.go`), not from
-  usersync. Section 1.1 is what keeps the two in step. Emitting each group's view
-  paths in `roster`'s output, so a consumer reads them instead of rebuilding
-  them, is the next step.
-- The reader-group constraint in 1.1 is enforced at apply time, not at load
-  ([#13](https://github.com/lesomnus/usersync/issues/13)).
+- **Views live inside data folders.** `<groups>/<r>/<t>` shares a namespace
+  with what the reader group's members put in their own folder, and it is the
+  cause of the reader-group constraint in 1.1. The direction is to move views to
+  a namespace only usersync owns, `<views>/<r>/<t>`
+  ([#13](https://github.com/lesomnus/usersync/issues/13)). A consumer that reads
+  `views[].path` instead of building the path follows that move without a change.
+- The reader-group constraint in 1.1 is enforced at apply time, not at load.

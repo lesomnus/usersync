@@ -72,6 +72,10 @@ usersync version         # print the build stamp
 Note: `xli` expects flags before positional args, so put every flag ahead of the
 positional user, e.g. `usersync passwd --seed-file s user` or `usersync purge --yes <user>`.
 
+Other programs build on what these commands print and on the folders and mounts
+`apply` leaves behind. What they may rely on, and the rules for changing it, is
+in [`docs/interface.md`](docs/interface.md).
+
 The account backend is auto-detected (`provider: auto`): shadow-utils
 (`useradd`), busybox (`adduser`), or BSD `pw` — set `provider:` to pin one.
 

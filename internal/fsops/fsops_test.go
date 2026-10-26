@@ -208,15 +208,57 @@ func TestEnsureMountpointRefusesNonEmptyDirectory(t *testing.T) {
 		t.Fatal("ensureMountpoint mounted over a directory that had files in it")
 	}
 
-	// Empty is fine, and so is being called again on one it already made.
+	// Empty is not enough: a person made this one (their uid, 0755), and taking
+	// it would turn their folder into a root-owned mountpoint that revocation
+	// later deletes.
 	if err := os.Remove(filepath.Join(point, "notes.md")); err != nil {
 		t.Fatal(err)
 	}
+	if err := ensureMountpoint(point); err == nil || !strings.Contains(err.Error(), "did not make") {
+		t.Fatalf("ensureMountpoint took an empty directory it did not make: %v", err)
+	}
+}
+
+// What ensureMountpoint makes itself it takes again: root-owned, viewMode. This
+// is the state an unmounted view, or a run that stopped before mounting, leaves.
+func TestEnsureMountpointIsIdempotentOnItsOwn(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root: the mountpoint is chowned to root")
+	}
+	point := filepath.Join(t.TempDir(), "perception")
 	if err := ensureMountpoint(point); err != nil {
-		t.Fatalf("ensureMountpoint on an empty directory: %v", err)
+		t.Fatalf("ensureMountpoint on a new path: %v", err)
 	}
 	if err := ensureMountpoint(point); err != nil {
 		t.Fatalf("ensureMountpoint is not idempotent: %v", err)
+	}
+}
+
+// A view is a read-only idmapped mount. A mount that only has a view's SHAPE —
+// <groups>/<X>/<team> — is somebody else's, and converging must neither take it
+// down (a reader no longer declared) nor mount over it (a reader declared).
+func TestEnsureReaderViewsLeavesNonViewMountsAlone(t *testing.T) {
+	base := t.TempDir()
+	point := filepath.Join(base, "rl", "perception")
+	fixture := "99 878 0:155 /data /" + strings.TrimPrefix(point, "/") + " rw,noatime shared:9 - zfs tank/rl-data rw\n"
+	p := filepath.Join(t.TempDir(), "mountinfo")
+	if err := os.WriteFile(p, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := mountsFile
+	mountsFile = p
+	defer func() { mountsFile = old }()
+
+	fs := OS{}
+	// rl is not a declared reader of perception. Before, this was taken for a
+	// stale view and unmounted.
+	if err := fs.EnsureReaderViews(base, "perception", 10001, nil); err != nil {
+		t.Fatalf("EnsureReaderViews touched a mount that is not a view: %v", err)
+	}
+	// rl is declared. The view's place is taken by something else: refuse.
+	err := fs.EnsureReaderViews(base, "perception", 10001, []ReaderGroup{{Name: "rl", GID: 10014}})
+	if err == nil || !strings.Contains(err.Error(), "not a read-only id-mapped view") {
+		t.Fatalf("EnsureReaderViews over a non-view mount = %v; want a refusal", err)
 	}
 }
 

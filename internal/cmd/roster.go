@@ -54,10 +54,22 @@ func NewCmdRoster() *xli.Command {
 // structs, so the YAML schema and this wire format can move independently —
 // the YAML is a file people edit, and this is an interface another program
 // parses.
+//
+// It is part of the documented interface (docs/interface.md), and
+// internal/integration pins it byte for byte. Adding a field is compatible;
+// renaming, removing or changing what a field means is not, and bumps Schema.
 type rosterView struct {
+	// Schema is the version of this shape. A consumer that finds a number it does
+	// not know should refuse rather than guess, because the change that bumped it
+	// was by definition one an old reader would misread.
+	Schema int         `json:"schema"`
 	Groups []groupView `json:"groups"`
 	Users  []userView  `json:"users"`
 }
+
+// rosterSchema is the current rosterView.Schema. See docs/interface.md before
+// changing it.
+const rosterSchema = 1
 
 type groupView struct {
 	Name        string   `json:"name"`
@@ -83,7 +95,7 @@ type userView struct {
 }
 
 func newRosterView(ro *roster.Roster) rosterView {
-	v := rosterView{Groups: []groupView{}, Users: []userView{}}
+	v := rosterView{Schema: rosterSchema, Groups: []groupView{}, Users: []userView{}}
 	for _, g := range ro.Groups {
 		v.Groups = append(v.Groups, groupView{
 			Name:        g.Name,

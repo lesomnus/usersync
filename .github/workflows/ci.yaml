@@ -58,7 +58,7 @@ jobs:
     # the SAME `go test -tags integration` that scripts/verify-integration.sh
     # runs locally via the dind sidecar.
     container:
-      image: golang:1.26
+      image: golang:1.27
     env:
       DEBIAN_FRONTEND: noninteractive
       GOFLAGS: -buildvcs=false
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.27'
 
       - name: gofmt
         run: test -z "$(gofmt -l .)"

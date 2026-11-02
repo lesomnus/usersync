@@ -14,7 +14,7 @@ ARG BUILD_HASH="0000000000000000000000000000000000000000"
 ARG BUILD_ID="r0"
 ARG APP_VERSION="000000-r0"
 
-FROM golang:1.26-trixie AS build
+FROM golang:1.27-trixie AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

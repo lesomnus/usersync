@@ -1,4 +1,4 @@
-FROM ghcr.io/lesomnus/dev-golang:1.26
+FROM ghcr.io/lesomnus/dev-golang:1.27
 
 # Docker CLI so the dev container can drive the `docker` (dind) sidecar service
 # via DOCKER_HOST (see docker-compose.yaml). Copied from the official CLI image,

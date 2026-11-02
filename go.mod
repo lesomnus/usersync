@@ -7,8 +7,8 @@ require (
 	github.com/lesomnus/mkot v0.0.0-20261101233651-56284edc7453
 	github.com/lesomnus/mkot/pretty v0.0.0-20261101233651-56284edc7453
 	github.com/lesomnus/otx v0.0.0-20261101232829-bc58838cf65b
-	github.com/lesomnus/xli v0.0.0-20260415201908-e5f4624a24b7
-	github.com/lesomnus/z v0.0.0-20260531102454-3f1853bb4278
+	github.com/lesomnus/xli v0.0.0-20261009121920-4ce270c7448c
+	github.com/lesomnus/z v0.0.0-20260907061127-c3858eb05878
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.47.0
 )

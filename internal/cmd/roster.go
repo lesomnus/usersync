@@ -90,7 +90,7 @@ type viewEntry struct {
 
 // rosterSchema is the current rosterView.Schema. See docs/interface.md before
 // changing it.
-const rosterSchema = 1
+const rosterSchema = 2
 
 type groupView struct {
 	Name        string   `json:"name"`

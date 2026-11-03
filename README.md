@@ -158,18 +158,26 @@ groups:
 Mode bits cannot express this — owner, group, other, and no room to split reads
 from writes inside one group — so the grant is a **mount**, not something written
 on the files. Each reader group gets a read-only, id-mapped bind of the team's
-folder inside its own folder:
+folder in the view namespace, `paths.views`, and a read-only share to reach it
+by:
+
+```yaml
+paths:
+  groups: /srv/data/teams
+  views: /srv/data/views      # outside groups and home; needed once any group has readers
+```
 
 ```
 on disk       <groups>/team-a              root:team-a  2770 / 0660   (unchanged)
-the view      <groups>/team-a-ro/team-a    read-only, team-a's gid mapped to team-a-ro's
+the view      <views>/team-a-ro/team-a     read-only, team-a's gid mapped to team-a-ro's
+its folder    <views>/team-a-ro            root:team-a-ro 0750 — only the group enters, nobody writes
+its share     [team-a-ro.read]             read only, @team-a-ro
 ```
 
 A reader therefore reads by the ordinary group mode bit — the files look like
 theirs — and every write is refused by the kernel with `EROFS`. The verdict is
-the kernel's, so SMB and the web agree without either being configured for it,
-and `smb.conf` does not change at all: the reader group's own share already
-serves the view.
+the kernel's, so SMB and the web agree without either being configured for it.
+A group name may not end in `.read`.
 
 The reason it is a mount is cost. Written onto the files, declaring a reader had
 to reach every file in the tree: on a real share (12.4M files) that was 22
@@ -192,30 +200,11 @@ What follows from that:
 actually mounted — the question `getfacl` used to answer for free, now that the
 answer is split between the roster and the mount table.
 
-#### Where views live: `paths.views`
-
-The view above sits inside the reader group's own folder, next to whatever its
-members put there, and is told apart by its name. Setting `paths.views` gives
-views a namespace of their own, and a share to reach them by:
-
-```yaml
-paths:
-  groups: /srv/data/teams
-  views: /srv/data/views      # outside groups and home
-# legacy_views: true         # the default: keep the old views too, while people move
-```
-
-```
-the view      <views>/team-a-ro/team-a      read-only, as before
-its folder    <views>/team-a-ro             root:team-a-ro 0750 — only the group enters, nobody writes
-its share     [team-a-ro.read]              read only, @team-a-ro
-```
-
-`roster` then reports the new path, so a program that opens what it is given
-moves at once. People move to the `.read` share. When nobody uses the old
-location, `legacy_views: false` takes those views down, and with them the one
-case the old layout could not do: giving a reader group readers of its own
-(usersync#13). A group name may not end in `.read`.
+Views used to be mounted inside the reader group's own folder,
+`<groups>/team-a-ro/team-a`, where they shared a namespace with what its members
+put there and kept a reader group from having readers of its own. That location
+is gone (usersync#13). A config written during the move may still say
+`legacy_views: false`; it is accepted and means nothing.
 
 #### Reading everything: `read_all`
 
@@ -238,9 +227,7 @@ reaches every group except itself, those open to the world already
 `readers` list it reaches anyway is refused as redundant. `roster` lists it in
 the `readers` of every folder it reaches, as `all` is resolved into `members`.
 
-It needs `paths.views` with `legacy_views: false`: it reads reader groups too,
-which the legacy location cannot do. Every command that loads the roster
-refuses it otherwise.
+Like any reader, it needs `paths.views`.
 
 ### Editing membership from a program
 

@@ -4,56 +4,12 @@ import (
 	"cmp"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
-
-// The parser is what turns getfacl output into the set compared against the
-// roster, so the shapes getfacl actually emits are pinned here.
-func TestParseReaderGIDs(t *testing.T) {
-	// A real `getfacl -pnE` on a team folder with one writer (owning group) and
-	// two reader groups, one of which the mask has rendered #effective:r--.
-	const out = `# file: teams/perception
-# owner: 0
-# group: 10001
-user::rwx
-group::rwx
-group:10011:r-x
-group:10012:r-x	#effective:r--
-mask::rwx
-other::---
-default:user::rwx
-default:group::rwx
-default:group:10011:r-x
-default:mask::rwx
-default:other::---
-`
-	got := parseReaderGIDs(out)
-	want := []uint32{10011, 10012}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("parseReaderGIDs = %v; want %v", got, want)
-	}
-}
-
-// A writer group (rw) is not a reader, and default entries are templates, not
-// the access grant — neither may leak into the compared set.
-func TestParseReaderGIDsExcludesWritersAndDefaults(t *testing.T) {
-	const out = `group::rwx
-group:10001:rwx
-group:10011:r-x
-default:group:10099:r-x
-mask::rwx
-`
-	got := parseReaderGIDs(out)
-	want := []uint32{10011}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("parseReaderGIDs = %v; want %v", got, want)
-	}
-}
 
 // The mapping is the whole grant, and a mistake in it does not fail loudly: an
 // id nobody mapped becomes the overflow id, which is unreadable even by root.
@@ -235,10 +191,13 @@ func TestEnsureMountpointIsIdempotentOnItsOwn(t *testing.T) {
 }
 
 // A view is a read-only idmapped mount. A mount that only has a view's SHAPE —
-// <groups>/<X>/<team> — is somebody else's, and converging must neither take it
+// <views>/<X>/<team> — is somebody else's, and converging must neither take it
 // down (a reader no longer declared) nor mount over it (a reader declared).
 func TestEnsureReaderViewsLeavesNonViewMountsAlone(t *testing.T) {
 	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "rl"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	point := filepath.Join(base, "rl", "perception")
 	fixture := "99 878 0:155 /data /" + strings.TrimPrefix(point, "/") + " rw,noatime shared:9 - zfs tank/rl-data rw\n"
 	p := filepath.Join(t.TempDir(), "mountinfo")
@@ -252,42 +211,13 @@ func TestEnsureReaderViewsLeavesNonViewMountsAlone(t *testing.T) {
 	fs := OS{}
 	// rl is not a declared reader of perception. Before, this was taken for a
 	// stale view and unmounted.
-	if err := fs.EnsureReaderViews(ViewLayout{Groups: base, Legacy: true}, "perception", 10001, nil); err != nil {
+	if err := fs.EnsureReaderViews(ViewLayout{Groups: t.TempDir(), Views: base}, "perception", 10001, nil); err != nil {
 		t.Fatalf("EnsureReaderViews touched a mount that is not a view: %v", err)
 	}
 	// rl is declared. The view's place is taken by something else: refuse.
-	err := fs.EnsureReaderViews(ViewLayout{Groups: base, Legacy: true}, "perception", 10001, []ReaderGroup{{Name: "rl", GID: 10014}})
+	err := fs.EnsureReaderViews(ViewLayout{Groups: t.TempDir(), Views: base}, "perception", 10001, []ReaderGroup{{Name: "rl", GID: 10014}})
 	if err == nil || !strings.Contains(err.Error(), "not a read-only id-mapped view") {
 		t.Fatalf("EnsureReaderViews over a non-view mount = %v; want a refusal", err)
-	}
-}
-
-// Readers used to be written onto the folder as an ACL. While such an entry is
-// there it is a second way in, one that outlives the roster declaring it — so
-// converging a folder means clearing it. One setfacl on the folder is enough:
-// without x on the folder there is no route to the entries beneath it.
-func TestEnsureReaderViewsClearsTheLegacyFolderACL(t *testing.T) {
-	if _, err := exec.LookPath("setfacl"); err != nil {
-		t.Skip("setfacl not installed")
-	}
-	base := t.TempDir()
-	team := filepath.Join(base, "perception")
-	if err := os.Mkdir(team, 0o2770); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("setfacl", "-m", "g:10011:rX", team).CombinedOutput(); err != nil {
-		t.Skipf("filesystem has no ACL support: %s", out)
-	}
-
-	fs := OS{}
-	if gids, err := fs.ReadReaderGIDs(team); err != nil || len(gids) != 1 {
-		t.Fatalf("setup: readers = %v, %v; want one entry", gids, err)
-	}
-	if err := fs.EnsureReaderViews(ViewLayout{Groups: base, Legacy: true}, "perception", 10001, nil); err != nil {
-		t.Fatalf("EnsureReaderViews: %v", err)
-	}
-	if gids, err := fs.ReadReaderGIDs(team); err != nil || len(gids) != 0 {
-		t.Fatalf("after converging, readers = %v, %v; want none", gids, err)
 	}
 }
 
@@ -371,38 +301,19 @@ func checkCovers(t *testing.T, exts []extent, except uint64) {
 	gap(next, maxID)
 }
 
-func TestViewLayoutLocations(t *testing.T) {
-	legacyOnly := ViewLayout{Groups: "/g", Legacy: true}
-	both := ViewLayout{Groups: "/g", Views: "/v", Legacy: true}
-	moved := ViewLayout{Groups: "/g", Views: "/v"}
-
-	if got := legacyOnly.Path("sim", "sim-ro"); got != "/g/sim-ro/sim" {
-		t.Errorf("legacy-only Path = %q", got)
-	}
-	// Once there is a view namespace, that is where a consumer is sent — also
-	// during the transition, so it moves before the legacy views come down.
-	if got := both.Path("sim", "sim-ro"); got != "/v/sim-ro/sim" {
-		t.Errorf("transition Path = %q", got)
-	}
-	if got := both.Points("sim", "sim-ro"); !reflect.DeepEqual(got, []string{"/v/sim-ro/sim", "/g/sim-ro/sim"}) {
-		t.Errorf("transition Points = %v", got)
-	}
-	if got := moved.Points("sim", "sim-ro"); !reflect.DeepEqual(got, []string{"/v/sim-ro/sim"}) {
-		t.Errorf("moved Points = %v", got)
-	}
-	if _, inactive := moved.bases(); !reflect.DeepEqual(inactive, []string{"/g"}) {
-		t.Errorf("moved inactive = %v; the legacy location must be emptied", inactive)
+func TestViewLayoutPath(t *testing.T) {
+	l := ViewLayout{Groups: "/g", Views: "/v"}
+	if got := l.Path("sim", "sim-ro"); got != "/v/sim-ro/sim" {
+		t.Errorf("Path = %q; want /v/sim-ro/sim", got)
 	}
 }
 
-// A view counts as granted only when it is mounted at EVERY active location.
-// Anything else reads as drift under a tagged name, so the reconciler converges
-// it: half-moved (@partial) or left behind at a retired location (@stale).
-func TestReadReaderViewsAcrossLocations(t *testing.T) {
+// A view counts as granted only when it is mounted, read-only and idmapped, in
+// the view namespace. A mount at the old location inside the reader's folder is
+// not a view any more, and without a namespace there are no views at all.
+func TestReadReaderViews(t *testing.T) {
 	root := t.TempDir()
 	groups, views := filepath.Join(root, "teams"), filepath.Join(root, "views")
-	// The view's root and the folder holding it present the same gid here (the
-	// test's own), which is what "working" checks.
 	for _, d := range []string{
 		filepath.Join(groups, "sim-ro", "sim"),
 		filepath.Join(views, "sim-ro", "sim"),
@@ -411,10 +322,10 @@ func TestReadReaderViewsAcrossLocations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mount := func(point string) string {
-		return "1 1 0:1 /teams/sim " + point + " ro,noatime,idmapped shared:1 - zfs tank/nas rw\n"
+	mount := func(point, opts string) string {
+		return "1 1 0:1 /teams/sim " + point + " " + opts + " shared:1 - zfs tank/nas rw\n"
 	}
-	read := func(l ViewLayout, mounts ...string) []string {
+	read := func(l ViewLayout, mounts ...string) map[string][]string {
 		t.Helper()
 		p := filepath.Join(t.TempDir(), "mountinfo")
 		if err := os.WriteFile(p, []byte(strings.Join(mounts, "")), 0o600); err != nil {
@@ -427,23 +338,23 @@ func TestReadReaderViewsAcrossLocations(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return got["sim"]
+		return got
 	}
-	legacy, moved := mount(filepath.Join(groups, "sim-ro", "sim")), mount(filepath.Join(views, "sim-ro", "sim"))
-	transition := ViewLayout{Groups: groups, Views: views, Legacy: true}
-	done := ViewLayout{Groups: groups, Views: views}
+	l := ViewLayout{Groups: groups, Views: views}
+	view := mount(filepath.Join(views, "sim-ro", "sim"), "ro,noatime,idmapped")
+	old := mount(filepath.Join(groups, "sim-ro", "sim"), "ro,noatime,idmapped")
+	writable := mount(filepath.Join(views, "sim-ro", "sim"), "rw,noatime,idmapped")
 
 	for _, tc := range []struct {
 		what   string
 		layout ViewLayout
 		mounts []string
-		want   []string
+		want   map[string][]string
 	}{
-		{"legacy only, as before", ViewLayout{Groups: groups, Legacy: true}, []string{legacy}, []string{"sim-ro"}},
-		{"transition, only the old one up", transition, []string{legacy}, []string{"sim-ro@partial"}},
-		{"transition, both up", transition, []string{legacy, moved}, []string{"sim-ro"}},
-		{"moved, old one still up", done, []string{legacy, moved}, []string{"sim-ro", "sim-ro@stale"}},
-		{"moved, converged", done, []string{moved}, []string{"sim-ro"}},
+		{"a view", l, []string{view}, map[string][]string{"sim": {"sim-ro"}}},
+		{"the old location is not read", l, []string{old}, map[string][]string{}},
+		{"a writable mount is not a view", l, []string{writable}, map[string][]string{}},
+		{"no namespace, no views", ViewLayout{Groups: groups}, []string{view, old}, map[string][]string{}},
 	} {
 		if got := read(tc.layout, tc.mounts...); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: views = %v; want %v", tc.what, got, tc.want)
@@ -451,10 +362,22 @@ func TestReadReaderViewsAcrossLocations(t *testing.T) {
 	}
 }
 
+// Readers declared without a view namespace are refused: there is nowhere to
+// put their views. Without readers there is nothing to do.
+func TestEnsureReaderViewsNeedsANamespace(t *testing.T) {
+	l := ViewLayout{Groups: t.TempDir()}
+	if err := (OS{}).EnsureReaderViews(l, "sim", 10017, nil); err != nil {
+		t.Errorf("no readers, no namespace: %v", err)
+	}
+	if err := (OS{}).EnsureReaderViews(l, "sim", 10017, []ReaderGroup{{Name: "sim-ro", GID: 10020}}); err == nil || !strings.Contains(err.Error(), "paths.views") {
+		t.Errorf("readers without a namespace = %v; want a refusal naming paths.views", err)
+	}
+}
+
 // A mountpoint left behind after its view came down (the removal failed) reads
 // as drift, and converging removes it. Only the exact shape usersync makes
-// counts: an empty directory, viewMode, owned by the mountpoint owner. A
-// person's folder of the same name is never reported nor removed.
+// counts: an empty directory, viewMode, owned by the mountpoint owner. Anything
+// else of the same name is never reported nor removed.
 func TestLeftoverMountpoints(t *testing.T) {
 	old := mountpointUID
 	mountpointUID = uint32(os.Getuid())
@@ -474,11 +397,11 @@ func TestLeftoverMountpoints(t *testing.T) {
 	}
 	mk(filepath.Join(groups, "sim"), 0o770)
 	mk(filepath.Join(groups, "rl"), 0o770)
-	leftover := mk(filepath.Join(groups, "sim-ro", "sim"), viewMode)
-	// A person's folder named like a team: not ours, by mode.
-	persons := mk(filepath.Join(groups, "sim-ro", "rl"), 0o770)
+	leftover := mk(filepath.Join(views, "sim-ro", "sim"), viewMode)
+	// Something not of usersync's shape, by mode.
+	other := mk(filepath.Join(views, "sim-ro", "rl"), 0o770)
 	// Ours by shape but not empty: not ours either.
-	full := mk(filepath.Join(groups, "ops", "sim"), 0o755)
+	full := mk(filepath.Join(views, "ops", "sim"), 0o755)
 	if err := os.WriteFile(filepath.Join(full, "x"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +409,6 @@ func TestLeftoverMountpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Chmod(full, 0o755) // so TempDir can clean up
-	mk(filepath.Join(views, "sim-ro"), 0o750)
 
 	p := filepath.Join(t.TempDir(), "mountinfo")
 	if err := os.WriteFile(p, nil, 0o600); err != nil {
@@ -505,13 +427,13 @@ func TestLeftoverMountpoints(t *testing.T) {
 		t.Fatalf("views = %v; want %v", got, want)
 	}
 
-	if err := sweepLeftoverPoints(groups, groups, "sim", nil); err != nil {
+	if err := sweepLeftoverPoints(groups, views, "sim", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
 		t.Errorf("the leftover mountpoint %s is still there (%v)", leftover, err)
 	}
-	for _, kept := range []string{persons, full} {
+	for _, kept := range []string{other, full} {
 		if _, err := os.Stat(kept); err != nil {
 			t.Errorf("%s was removed: %v", kept, err)
 		}
@@ -524,8 +446,8 @@ func TestLeftoverMountpoints(t *testing.T) {
 		t.Errorf("after sweeping views = %v; want none", got)
 	}
 
-	// A reader still declared at an active location keeps its mountpoint: the
-	// view is about to be mounted over it.
+	// A reader still declared keeps its mountpoint: the view is about to be
+	// mounted over it.
 	mk(filepath.Join(views, "sim-ro", "sim"), viewMode)
 	if err := sweepLeftoverPoints(groups, views, "sim", map[string]ReaderGroup{"sim-ro": {Name: "sim-ro"}}); err != nil {
 		t.Fatal(err)

@@ -28,8 +28,8 @@ const DefaultShell = "/usr/sbin/nologin"
 type CollectOpts struct {
 	HomeBase   string
 	GroupsBase string
-	// Views is where reader views are kept. Its zero value means the legacy
-	// location only, under GroupsBase.
+	// Views is where reader views are kept. Its Groups defaults to GroupsBase;
+	// with no Views base, no views are made.
 	Views fsops.ViewLayout
 	// FS, if set, is used to record whether each managed home/group directory
 	// exists so the reconciler can heal a missing one.
@@ -119,14 +119,6 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 			path := filepath.Join(opts.GroupsBase, name)
 			g.FolderExists, g.FolderPerm, _, g.FolderGID = opts.FS.Stat(path)
 			g.ReaderViews, g.ReaderViewsKnown = views[name], viewsKnown
-			// Reader ACLs on the folder are what an older version wrote. Reading
-			// them is one getfacl on the folder itself — no walk — and it is what
-			// tells the reconciler there is still a second way in to close.
-			if g.FolderExists {
-				if gids, err := opts.FS.ReadReaderGIDs(path); err == nil {
-					g.LegacyReaderGIDs = gids
-				}
-			}
 		}
 		out.Groups[name] = g
 	}
@@ -172,7 +164,7 @@ type Deps struct {
 	Quota      quota.Controller // required for SetUserQuota / ClearUserQuota actions
 	HomeBase   string
 	GroupsBase string
-	// Views is where reader views are kept; zero means the legacy location only.
+	// Views is where reader views are kept (see CollectOpts.Views).
 	Views fsops.ViewLayout
 	Shell string // defaults to DefaultShell if empty
 
@@ -357,14 +349,10 @@ func (d Deps) initPW(user string) (string, error) {
 	return d.Deriver.InitPW(user), nil
 }
 
-// layoutOf fills in a layout's groups base when it was left zero, so a caller
-// that predates layouts gets the legacy location it always had.
+// layoutOf fills in a layout's groups base when it was left zero.
 func layoutOf(l fsops.ViewLayout, groupsBase string) fsops.ViewLayout {
 	if l.Groups == "" {
 		l.Groups = groupsBase
-	}
-	if l.Views == "" {
-		l.Legacy = true
 	}
 	return l
 }

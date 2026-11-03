@@ -13,7 +13,7 @@ import (
 
 // ReaderGroup is a group that may read another group's folder, paired with the
 // gid its view has to present. Both halves are needed: the name locates the view
-// (it lives in that group's own folder) and the gid is what the mount maps to.
+// (<views>/<name>/<team>) and the gid is what the mount maps to.
 type ReaderGroup struct {
 	Name string
 	GID  uint32
@@ -37,65 +37,31 @@ func ViewPath(base, team, reader string) string {
 	return filepath.Join(base, reader, team)
 }
 
-// ViewLayout says where read-only views are mounted.
+// ViewLayout says where read-only views are mounted: <views>/<reader>/<team>,
+// a namespace only usersync writes, with <views>/<reader> root:<reader> 0750 so
+// only that group enters it, under a <views> nobody can list. The source of a
+// view is the team's folder under Groups.
 //
-// Views began inside the reader group's own folder (<groups>/<reader>/<team>),
-// to avoid a share of their own. That put a system object in a folder people
-// write in, and identified it by its name, which cost three things (usersync#13):
-// a person's folder could collide with a view; a group holding views could not
-// itself have readers, because an id-mapped mount cannot be id-mapped again and
-// --rbind of its folder takes its views along; and the meaning of a path there
-// depended on the mount table.
-//
-// Views now belong in a namespace only usersync writes, Views: <views>/<reader>/
-// <team>, with <views>/<reader> root:<reader> 0750 so only that group enters it,
-// under a <views> nobody can list.
-// Legacy keeps the old location mounted as well, for the time it takes the
-// people and programs that open views through it to move. A location that is no
-// longer active has its views taken down.
+// Views began inside the reader group's own folder (<groups>/<reader>/<team>).
+// That put a system object in a folder people write in, identified it by its
+// name, and kept a group holding views from having readers itself — an
+// id-mapped mount cannot be id-mapped again. That location is gone (usersync#13);
+// an installation still using it moves through a release that has
+// `legacy_views: false` first.
 type ViewLayout struct {
-	Groups string // team folders, and the legacy view location
-	Views  string // the view namespace; empty means views are still only legacy
-	Legacy bool   // with Views set, also keep views under Groups
+	Groups string // team folders, the source of every view
+	Views  string // the view namespace; empty means no views can be made
 }
 
-// Path is where a consumer should open team's view for reader: the view
-// namespace when there is one, the legacy location otherwise.
+// Path is where team's view for reader is mounted, and where a consumer opens it.
 func (l ViewLayout) Path(team, reader string) string {
-	if l.Views != "" {
-		return ViewPath(l.Views, team, reader)
-	}
-	return ViewPath(l.Groups, team, reader)
+	return ViewPath(l.Views, team, reader)
 }
 
-// Points is every path team's view for reader is mounted at, primary first.
-func (l ViewLayout) Points(team, reader string) []string {
-	active, _ := l.bases()
-	out := make([]string, 0, len(active))
-	for _, b := range active {
-		out = append(out, ViewPath(b, team, reader))
-	}
-	return out
-}
-
-// bases returns the locations views are kept at (active) and those whose views
-// must come down (inactive).
-func (l ViewLayout) bases() (active, inactive []string) {
-	if l.Views == "" {
-		return []string{l.Groups}, nil
-	}
-	if l.Legacy {
-		return []string{l.Views, l.Groups}, nil
-	}
-	return []string{l.Views}, []string{l.Groups}
-}
-
-// Reader-view state tags. A reader whose view is not exactly where the layout
-// wants it is reported under a tagged name, which never equals a declared
-// reader — so the reconciler sees drift and converges, and `explain` shows why.
+// Reader-view state tags. A reader whose view is not as the layout wants it is
+// reported under a tagged name, which never equals a declared reader — so the
+// reconciler sees drift and converges, and `explain` shows why.
 const (
-	viewPartial  = "@partial"  // mounted at some active locations, not all
-	viewStale    = "@stale"    // mounted at a location that is no longer active
 	viewLeftover = "@leftover" // an empty mountpoint usersync made, with no view on it
 )
 
@@ -148,7 +114,7 @@ func idmapSpec(teamGID, readerGID uint32) (string, error) {
 }
 
 // ReadReaderViews returns, for each team folder, the reader groups that hold a
-// WORKING read-only view of it at every active location of the layout.
+// WORKING read-only view of it in the view namespace.
 //
 // It reads the mount table rather than walking the tree, so the cost is the
 // number of mounts, not the number of files — which is the whole point of the
@@ -157,82 +123,39 @@ func idmapSpec(teamGID, readerGID uint32) (string, error) {
 // gid, so a view left over from before a gid change reads as absent and is
 // rebuilt instead of being trusted.
 //
-// A reader mounted at only some active locations comes back as
-// "<reader>@partial", and one still mounted at an inactive location as
-// "<reader>@stale". Neither equals a declared name, so both read as drift.
+// A mountpoint left behind by a view that is gone comes back as
+// "<reader>@leftover", which never equals a declared name, so it reads as drift.
 func (o OS) ReadReaderViews(l ViewLayout) (map[string][]string, error) {
+	out := map[string][]string{}
+	if l.Views == "" {
+		return out, nil
+	}
 	mounts, err := readMounts()
 	if err != nil {
 		return nil, err
 	}
-	active, inactive := l.bases()
-	// present[base][team][reader]
-	present := map[string]map[string]map[string]bool{}
-	for _, base := range append(append([]string{}, active...), inactive...) {
-		base = filepath.Clean(base)
-		present[base] = map[string]map[string]bool{}
-		for _, m := range mounts {
-			reader, team, ok := splitViewPath(base, m.point)
-			if !ok || !isReadOnlyIdmapped(m.opts) {
-				continue
-			}
-			if !o.viewPresents(base, reader, m.point) {
-				continue
-			}
-			if present[base][team] == nil {
-				present[base][team] = map[string]bool{}
-			}
-			present[base][team][reader] = true
+	base := filepath.Clean(l.Views)
+	for _, m := range mounts {
+		reader, team, ok := splitViewPath(base, m.point)
+		if !ok || !isReadOnlyIdmapped(m.opts) {
+			continue
 		}
-	}
-
-	out := map[string][]string{}
-	teams := map[string]bool{}
-	for _, byTeam := range present {
-		for t := range byTeam {
-			teams[t] = true
+		if !o.viewPresents(base, reader, m.point) {
+			continue
 		}
-	}
-	for team := range teams {
-		seen := map[string]bool{}
-		for _, base := range active {
-			for r := range present[filepath.Clean(base)][team] {
-				seen[r] = true
-			}
-		}
-		for r := range seen {
-			everywhere := true
-			for _, base := range active {
-				if !present[filepath.Clean(base)][team][r] {
-					everywhere = false
-				}
-			}
-			if everywhere {
-				out[team] = append(out[team], r)
-			} else {
-				out[team] = append(out[team], r+viewPartial)
-			}
-		}
-		for _, base := range inactive {
-			for r := range present[filepath.Clean(base)][team] {
-				out[team] = append(out[team], r+viewStale)
-			}
-		}
+		out[team] = append(out[team], reader)
 	}
 
 	// A mountpoint whose view is gone but which is still there is drift too:
 	// apply removes it. Without this it would outlive a failed removal forever,
 	// because nothing else reads as a change once the mount is down.
-	isMounted := mountedPoints(mounts)
-	for _, base := range append(append([]string{}, active...), inactive...) {
-		left, err := leftoverPoints(l.Groups, base, "", isMounted)
-		if err != nil {
-			return nil, err
-		}
-		for team, readers := range left {
-			for _, r := range readers {
-				out[team] = append(out[team], r+viewLeftover)
-			}
+	left, err := leftoverPoints(l.Groups, base, "", mountedPoints(mounts))
+	if err != nil {
+		return nil, err
+	}
+	for team, readers := range left {
+		for _, r := range readers {
+			out[team] = append(out[team], r+viewLeftover)
 		}
 	}
 	for team := range out {
@@ -325,16 +248,14 @@ func isLeftoverPoint(point string) bool {
 }
 
 // viewPresents reports whether the mount at point shows the reader group's own
-// gid, which is what the mapping is for. base/reader is the folder holding the
-// view: the reader group's own folder at the legacy location, the directory
-// usersync made for it in the view namespace — both carry the reader's gid.
+// gid, which is what the mapping is for. base/reader is the directory usersync
+// made for the reader in the view namespace, which carries the reader's gid.
 //
-// The gid comes from the reader's FOLDER because this runs during collection,
-// where there is no roster to ask. On a converged system the two agree — the
-// folder is chgrp'd to the group by EnsureGroupDir — and where they do not, the
-// folder is drift in its own right and CreateGroup corrects it first. The
-// post-mount check in ensureView does not settle for the proxy: it has the
-// declared gid and compares against that.
+// The gid comes from that DIRECTORY because this runs during collection, where
+// there is no roster to ask. On a converged system the two agree, since
+// ensureReaderDir chowns it to the group on every grant. The post-mount check in
+// ensureView does not settle for the proxy: it has the declared gid and compares
+// against that.
 func (o OS) viewPresents(base, reader, point string) bool {
 	folder, err := os.Stat(filepath.Join(base, reader))
 	if err != nil {
@@ -362,35 +283,21 @@ func viewGIDIs(point string, gid uint32) bool {
 // team's gid as their own, and cannot write because the mount is read-only, so
 // declaring a reader costs the same whether the folder holds ten files or ten
 // million.
-//
-// It also clears any named-group ACL entry left on the folder ITSELF by the
-// previous implementation. That is one setfacl, not a walk: entries deeper in
-// the tree are unreachable once the folder does not let the reader in, so they
-// are left where they are rather than paid for again.
 func (o OS) EnsureReaderViews(l ViewLayout, team string, teamGID uint32, readers []ReaderGroup) error {
-	if err := o.clearFolderReaderACL(filepath.Join(l.Groups, team)); err != nil {
-		return err
+	if l.Views == "" {
+		if len(readers) > 0 {
+			return fmt.Errorf("readers of %s need paths.views: there is nowhere to mount their views", team)
+		}
+		return nil
 	}
 	mounts, err := readMounts()
 	if err != nil {
 		return err
 	}
-	active, inactive := l.bases()
-	for _, base := range active {
-		if err := o.convergeViews(mounts, l.Groups, base, team, teamGID, readers); err != nil {
-			return err
-		}
-	}
-	// A location no longer in use keeps nothing.
-	for _, base := range inactive {
-		if err := o.convergeViews(mounts, l.Groups, base, team, teamGID, nil); err != nil {
-			return err
-		}
-	}
-	return nil
+	return o.convergeViews(mounts, l.Groups, l.Views, team, teamGID, readers)
 }
 
-// convergeViews makes readers exactly the views of team under one base.
+// convergeViews makes readers exactly the views of team under base.
 func (o OS) convergeViews(mounts []mountEntry, groupsBase, base, team string, teamGID uint32, readers []ReaderGroup) error {
 	want := map[string]ReaderGroup{}
 	for _, r := range readers {
@@ -440,10 +347,8 @@ func (o OS) convergeViews(mounts []mountEntry, groupsBase, base, team string, te
 	}
 
 	for _, r := range readers {
-		if base != groupsBase {
-			if err := ensureReaderDir(base, r); err != nil {
-				return err
-			}
+		if err := ensureReaderDir(base, r); err != nil {
+			return err
 		}
 		if err := o.ensureView(groupsBase, base, team, teamGID, r, mounted[r.Name]); err != nil {
 			return err
@@ -556,8 +461,9 @@ func (o OS) ensureView(groupsBase, base, team string, teamGID uint32, reader Rea
 // ensureMountpoint makes point an empty root-owned directory to mount over.
 //
 // A non-empty directory is refused rather than mounted over: the mount would
-// hide whatever is in it for as long as it lasts, and a reader group's folder is
-// a folder people put things in.
+// hide whatever is in it for as long as it lasts. Nobody but usersync writes in
+// the view namespace, so this is a guard against a broken invariant, not
+// against people.
 func ensureMountpoint(point string) error {
 	fi, err := os.Stat(point)
 	switch {
@@ -580,9 +486,8 @@ func ensureMountpoint(point string) error {
 		// An empty directory is taken only if it is one of ours: root-owned and
 		// viewMode, which is what this function leaves behind (a view that was
 		// unmounted, or a run that stopped between here and the mount). Anything
-		// else was made by a person in their group's folder, and taking it would
-		// turn their folder into a root-owned mountpoint and, at revocation,
-		// delete it.
+		// else is not usersync's, and taking it would make it a root-owned
+		// mountpoint and, at revocation, delete it.
 		st, ok := fi.Sys().(*syscall.Stat_t)
 		if !ok || st.Uid != 0 || fi.Mode().Perm() != viewMode {
 			return fmt.Errorf("refusing to mount a read-only view over %s: an empty directory that usersync did not make is there (owner uid %d, mode %04o) — rename or remove it", point, statUID(st), fi.Mode().Perm())
@@ -612,21 +517,6 @@ func unmountView(point string) error {
 	}
 	if out, err := run("umount", "-l", point); err != nil {
 		return fmt.Errorf("unmount %s: %w: %s", point, err, strings.TrimSpace(out))
-	}
-	return nil
-}
-
-// clearFolderReaderACL removes named-group ACL entries from the folder itself,
-// which is what the pre-view implementation used to grant readers. Dropping the
-// entry on the folder is enough to close the grant: without x on the folder
-// there is no way in to the entries beneath it.
-func (o OS) clearFolderReaderACL(path string) error {
-	gids, err := o.ReadReaderGIDs(path)
-	if err != nil || len(gids) == 0 {
-		return nil // no ACL support, or nothing to clear
-	}
-	if out, err := run("setfacl", "-b", "-k", path); err != nil {
-		return fmt.Errorf("clear legacy reader ACL on %s: %w: %s", path, err, strings.TrimSpace(out))
 	}
 	return nil
 }

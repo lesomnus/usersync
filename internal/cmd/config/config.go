@@ -29,8 +29,8 @@ type PathsConfig struct {
 	Home   string `yaml:"home"`
 	Groups string `yaml:"groups"`
 	// Views is the namespace read-only views are mounted in, <views>/<reader>/
-	// <team>, and from which `shares` serves [<reader>.read]. Empty keeps views
-	// only at the legacy location inside the reader's own folder (usersync#13).
+	// <team>, and from which `shares` serves [<reader>.read]. A roster that
+	// declares readers needs it (usersync#13).
 	Views string `yaml:"views,omitempty"`
 }
 
@@ -65,10 +65,11 @@ type Config struct {
 	path string
 
 	Paths PathsConfig `yaml:"paths"`
-	// LegacyViews keeps views at the legacy location <groups>/<reader>/<team> as
-	// well as under paths.views, for the time it takes people and programs to
-	// move. Absent means true. Setting it false takes the legacy views down; it
-	// needs paths.views.
+	// LegacyViews is what is left of the switch that kept views at the old
+	// location, <groups>/<reader>/<team>, during the move to paths.views. That
+	// location is gone; `legacy_views: false` is still read, and means nothing,
+	// so a config written for the move keeps loading until it is cleaned up.
+	// `true` is refused: it asks for something this version cannot do.
 	LegacyViews *bool         `yaml:"legacy_views,omitempty"`
 	Manage      ManageConfig  `yaml:"manage"`
 	Protect     ProtectConfig `yaml:"protect"`
@@ -236,8 +237,8 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	if c.LegacyViews != nil && !*c.LegacyViews && c.Paths.Views == "" {
-		return fmt.Errorf("legacy_views: false needs paths.views — without it the legacy location is the only one")
+	if c.LegacyViews != nil && *c.LegacyViews {
+		return fmt.Errorf("legacy_views: true is no longer supported — views are only in paths.views (usersync#13); upgrade through a release with legacy_views: false, then remove the key")
 	}
 	switch c.Mode {
 	case "", "manage", "audit":
@@ -278,10 +279,10 @@ func (c *Config) Policy() (roster.Policy, error) {
 	}
 }
 
-// ViewLayout is where reader views are kept, from paths.views and legacy_views.
+// ViewLayout is where reader views are kept: paths.views, of folders under
+// paths.groups.
 func (c *Config) ViewLayout() fsops.ViewLayout {
-	legacy := c.LegacyViews == nil || *c.LegacyViews || c.Paths.Views == ""
-	return fsops.ViewLayout{Groups: c.Paths.Groups, Views: c.Paths.Views, Legacy: legacy}
+	return fsops.ViewLayout{Groups: c.Paths.Groups, Views: c.Paths.Views}
 }
 
 // within reports whether path is dir or lies beneath it. Both are cleaned and

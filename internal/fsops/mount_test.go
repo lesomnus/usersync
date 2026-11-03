@@ -58,7 +58,6 @@ func mountScratch(t *testing.T) (groups, views string) {
 	t.Cleanup(func() {
 		l := ViewLayout{Groups: groups, Views: views}
 		_ = OS{}.EnsureReaderViews(l, "sim", mountTeamGID, nil)
-		_ = OS{}.EnsureReaderViews(ViewLayout{Groups: groups, Legacy: true}, "sim", mountTeamGID, nil)
 	})
 	return groups, views
 }
@@ -72,12 +71,13 @@ func gidOf(t *testing.T, p string) uint32 {
 	return fi.Sys().(*syscall.Stat_t).Gid
 }
 
-func TestMountViewsThroughTheTransition(t *testing.T) {
+func TestMountViewLifecycle(t *testing.T) {
 	groups, views := mountScratch(t)
 	reader := []ReaderGroup{{Name: "sim-ro", GID: mountReaderGID}}
 	fs := OS{}
+	l := ViewLayout{Groups: groups, Views: views}
 
-	readViews := func(l ViewLayout) []string {
+	readViews := func() []string {
 		t.Helper()
 		v, err := fs.ReadReaderViews(l)
 		if err != nil {
@@ -86,38 +86,22 @@ func TestMountViewsThroughTheTransition(t *testing.T) {
 		return v["sim"]
 	}
 
-	// 1. Before: legacy only, as it is deployed today.
-	legacy := ViewLayout{Groups: groups, Legacy: true}
-	if err := fs.EnsureReaderViews(legacy, "sim", mountTeamGID, reader); err != nil {
-		t.Fatalf("legacy: %v", err)
+	// 1. Grant.
+	if err := fs.EnsureReaderViews(l, "sim", mountTeamGID, reader); err != nil {
+		t.Fatalf("grant: %v", err)
 	}
-	if got := readViews(legacy); !reflect.DeepEqual(got, []string{"sim-ro"}) {
-		t.Fatalf("legacy views = %v", got)
+	if got := readViews(); !reflect.DeepEqual(got, []string{"sim-ro"}) {
+		t.Fatalf("views = %v", got)
 	}
-
-	// 2. Transition: the same declaration under a layout with a namespace reads
-	// as half-done until it is converged, then as done, with both mounted.
-	transition := ViewLayout{Groups: groups, Views: views, Legacy: true}
-	if got := readViews(transition); !reflect.DeepEqual(got, []string{"sim-ro@partial"}) {
-		t.Fatalf("transition before converging = %v; want sim-ro@partial", got)
+	point := ViewPath(views, "sim", "sim-ro")
+	if g := gidOf(t, point); g != mountReaderGID {
+		t.Errorf("%s presents gid %d; want the reader's %d", point, g, mountReaderGID)
 	}
-	if err := fs.EnsureReaderViews(transition, "sim", mountTeamGID, reader); err != nil {
-		t.Fatalf("transition: %v", err)
+	if !isReadOnlyPath(point) {
+		t.Errorf("%s is writable", point)
 	}
-	if got := readViews(transition); !reflect.DeepEqual(got, []string{"sim-ro"}) {
-		t.Fatalf("transition views = %v", got)
-	}
-	newPoint, oldPoint := ViewPath(views, "sim", "sim-ro"), ViewPath(groups, "sim", "sim-ro")
-	for _, p := range []string{newPoint, oldPoint} {
-		if g := gidOf(t, p); g != mountReaderGID {
-			t.Errorf("%s presents gid %d; want the reader's %d", p, g, mountReaderGID)
-		}
-		if !isReadOnlyPath(p) {
-			t.Errorf("%s is writable", p)
-		}
-		if g := gidOf(t, filepath.Join(p, "data.txt")); g != mountReaderGID {
-			t.Errorf("a file under %s presents gid %d; want %d", p, g, mountReaderGID)
-		}
+	if g := gidOf(t, filepath.Join(point, "data.txt")); g != mountReaderGID {
+		t.Errorf("a file under %s presents gid %d; want %d", point, g, mountReaderGID)
 	}
 	// The namespace root lets everyone through and nobody list it; the group's
 	// directory is the group's to enter and nobody's to write.
@@ -133,57 +117,52 @@ func TestMountViewsThroughTheTransition(t *testing.T) {
 	if st.Uid != 0 || st.Gid != mountReaderGID || fi.Mode().Perm() != readerDirMode {
 		t.Errorf("%s is %d:%d %04o; want 0:%d %04o", dir, st.Uid, st.Gid, fi.Mode().Perm(), mountReaderGID, readerDirMode)
 	}
-
-	// 3. Done: legacy off. Reads as stale until converged; converging takes the
-	// legacy view down and leaves the reader's own folder as it was.
-	done := ViewLayout{Groups: groups, Views: views}
-	if got := readViews(done); !reflect.DeepEqual(got, []string{"sim-ro", "sim-ro@stale"}) {
-		t.Fatalf("done before converging = %v; want [sim-ro sim-ro@stale]", got)
+	// Nothing is made inside the reader group's own folder.
+	if entries, err := os.ReadDir(filepath.Join(groups, "sim-ro")); err != nil || len(entries) != 0 {
+		t.Errorf("the reader group's folder holds %v (%v); want nothing", entries, err)
 	}
-	if err := fs.EnsureReaderViews(done, "sim", mountTeamGID, reader); err != nil {
-		t.Fatalf("done: %v", err)
+	// Converging again changes nothing.
+	if err := fs.EnsureReaderViews(l, "sim", mountTeamGID, reader); err != nil {
+		t.Fatalf("again: %v", err)
 	}
-	if got := readViews(done); !reflect.DeepEqual(got, []string{"sim-ro"}) {
-		t.Fatalf("done views = %v", got)
-	}
-	if _, err := os.Stat(oldPoint); !os.IsNotExist(err) {
-		t.Errorf("the legacy mountpoint %s is still there (%v)", oldPoint, err)
+	if got := readViews(); !reflect.DeepEqual(got, []string{"sim-ro"}) {
+		t.Fatalf("views after converging again = %v", got)
 	}
 
-	// A mountpoint that outlived its view (its removal failed) is drift, and
-	// converging removes it.
-	if err := os.Mkdir(oldPoint, viewMode); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(oldPoint, viewMode); err != nil {
-		t.Fatal(err)
-	}
-	if got := readViews(done); !reflect.DeepEqual(got, []string{"sim-ro", "sim-ro@leftover"}) {
-		t.Fatalf("with a leftover mountpoint = %v; want [sim-ro sim-ro@leftover]", got)
-	}
-	if err := fs.EnsureReaderViews(done, "sim", mountTeamGID, reader); err != nil {
-		t.Fatalf("sweep: %v", err)
-	}
-	if _, err := os.Stat(oldPoint); !os.IsNotExist(err) {
-		t.Errorf("the leftover mountpoint %s is still there (%v)", oldPoint, err)
-	}
-	if got := readViews(done); !reflect.DeepEqual(got, []string{"sim-ro"}) {
-		t.Fatalf("after sweeping = %v", got)
-	}
-
-	// 4. Revocation: no readers, no views anywhere.
-	if err := fs.EnsureReaderViews(done, "sim", mountTeamGID, nil); err != nil {
+	// 2. Revoke: the view and its mountpoint go.
+	if err := fs.EnsureReaderViews(l, "sim", mountTeamGID, nil); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if got := readViews(done); len(got) != 0 {
+	if got := readViews(); len(got) != 0 {
 		t.Fatalf("after revocation views = %v", got)
+	}
+	if _, err := os.Stat(point); !os.IsNotExist(err) {
+		t.Errorf("the mountpoint %s is still there (%v)", point, err)
+	}
+
+	// 3. A mountpoint that outlived its view (its removal failed) is drift, and
+	// converging removes it.
+	if err := os.Mkdir(point, viewMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(point, viewMode); err != nil {
+		t.Fatal(err)
+	}
+	if got := readViews(); !reflect.DeepEqual(got, []string{"sim-ro@leftover"}) {
+		t.Fatalf("with a leftover mountpoint = %v; want [sim-ro@leftover]", got)
+	}
+	if err := fs.EnsureReaderViews(l, "sim", mountTeamGID, nil); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if _, err := os.Stat(point); !os.IsNotExist(err) {
+		t.Errorf("the leftover mountpoint %s is still there (%v)", point, err)
 	}
 }
 
-// The constraint #13 started from: a group whose folder holds views cannot be
-// given readers at the legacy location, because --rbind of its folder takes
-// its id-mapped views along and those cannot be id-mapped again. In the view
-// namespace the folder holds no views, so the same grant works.
+// The constraint #13 started from: when views lived in the reader group's own
+// folder, that group could not be given readers, because --rbind of its folder
+// took its id-mapped views along and those cannot be id-mapped again. In the
+// view namespace the folder holds no views, so the grant works.
 func TestMountReaderGroupCanBeReadInTheNamespace(t *testing.T) {
 	groups, views := mountScratch(t)
 	fs := OS{}

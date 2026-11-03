@@ -362,14 +362,6 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 			readerActions = append(readerActions, Action{Kind: SetGroupReaders, Name: g.Name, GID: g.GID,
 				Readers: wantReaders,
 				Reason:  reasonf("readers %v declared, %v mounted", wantNames, cur.ReaderViews)})
-		case len(cur.LegacyReaderGIDs) > 0:
-			// The views are right, but the folder still carries the ACL entries an
-			// older version granted readers with. They are a second, independent
-			// way in — one that survives a reader being removed from the roster —
-			// so the folder is not converged until they are cleared.
-			readerActions = append(readerActions, Action{Kind: SetGroupReaders, Name: g.Name, GID: g.GID,
-				Readers: wantReaders,
-				Reason:  reasonf("reader ACL gids %v left on the folder by an older version", cur.LegacyReaderGIDs)})
 		}
 		// present, gid matches, folder correct, owners agree, readers agree => no-op.
 	}

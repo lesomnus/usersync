@@ -187,10 +187,10 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 		}
 	}
 
-	// Readers name OTHER declared groups. The read-only view is mounted inside
-	// the reader group's OWN folder and maps to its gid, so a name that is not
-	// declared has neither — there would be nowhere to put the view and no id to
-	// map to. It is a refusal to load, exactly as an undeclared owner is.
+	// Readers name OTHER declared groups. The read-only view is mounted in the
+	// reader group's directory in the view namespace and maps to its gid, so a
+	// name that is not declared has neither — there would be nowhere to put the
+	// view and no id to map to. It is a refusal to load, exactly as an undeclared owner is.
 	groupByName := make(map[string]Group, len(ro.Groups))
 	for _, g := range ro.Groups {
 		groupByName[g.Name] = g

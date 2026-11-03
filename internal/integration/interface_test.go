@@ -32,6 +32,7 @@ func interfaceFixture(t *testing.T) string {
 	write("usersync.yaml", `paths:
   home: /srv/data/homes
   groups: /srv/data/teams
+  views: /srv/data/views
 mode: manage
 provider: shadow-utils
 `)
@@ -79,12 +80,14 @@ users:
 //   - list fields are `[]`, never `null`;
 //   - `quota` is present only when a limit applies, and 0 is a limit;
 //   - `paths` are the configured bases, and `views` is readers inverted: on
-//     team-a-ro, the team it may read and the path apply mounts that view at.
+//     team-a-ro, the team it may read and the path apply mounts that view at,
+//     in the view namespace.
 const wantRoster = `{
-  "schema": 1,
+  "schema": 2,
   "paths": {
     "home": "/srv/data/homes",
-    "groups": "/srv/data/teams"
+    "groups": "/srv/data/teams",
+    "views": "/srv/data/views"
   },
   "groups": [
     {
@@ -112,7 +115,7 @@ const wantRoster = `{
       "views": [
         {
           "team": "team-a",
-          "path": "/srv/data/teams/team-a-ro/team-a"
+          "path": "/srv/data/views/team-a-ro/team-a"
         }
       ],
       "members": [
@@ -187,52 +190,11 @@ func TestInterfaceRosterOutput(t *testing.T) {
 	}
 }
 
-// With paths.views set, the view a consumer is sent to is in the namespace, and
-// `shares` serves it as [<reader>.read]. The legacy views stay mounted meanwhile
-// (legacy_views defaults to true), but they are no longer what anybody is told.
-func TestInterfaceViewsMoveWithPathsViews(t *testing.T) {
+// `shares` serves a reader's views as [<reader>.read], over its directory in the
+// view namespace. A roster with readers and no paths.views is refused: there is
+// nowhere to mount their views.
+func TestInterfaceViewsAndReadShares(t *testing.T) {
 	bin, dir := binary(t), interfaceFixture(t)
-	cfg := `paths:
-  home: /srv/data/homes
-  groups: /srv/data/teams
-  views: /srv/data/views
-mode: manage
-provider: shadow-utils
-`
-	if err := os.WriteFile(filepath.Join(dir, "usersync.yaml"), []byte(cfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	r := runCLI(t, bin, dir, "roster")
-	if r.code != 0 {
-		t.Fatalf("roster exited %d\nstderr: %s", r.code, r.stderr)
-	}
-	var out struct {
-		Paths struct {
-			Views string `json:"views"`
-		} `json:"paths"`
-		Groups []struct {
-			Name  string `json:"name"`
-			Views []struct {
-				Team, Path string
-			} `json:"views"`
-		} `json:"groups"`
-	}
-	if err := json.Unmarshal([]byte(r.stdout), &out); err != nil {
-		t.Fatalf("roster stdout is not JSON: %v\n%s", err, r.stdout)
-	}
-	if out.Paths.Views != "/srv/data/views" {
-		t.Errorf("paths.views = %q", out.Paths.Views)
-	}
-	var got string
-	for _, g := range out.Groups {
-		if g.Name == "team-a-ro" && len(g.Views) == 1 {
-			got = g.Views[0].Path
-		}
-	}
-	if got != "/srv/data/views/team-a-ro/team-a" {
-		t.Errorf("team-a-ro's view path = %q; want it in the view namespace", got)
-	}
 
 	s := runCLI(t, bin, dir, "shares")
 	if s.code != 0 {
@@ -246,12 +208,19 @@ provider: shadow-utils
 	if strings.Contains(s.stdout, "[team-a.read]") {
 		t.Errorf("[team-a.read] rendered, but team-a reads nothing")
 	}
+
+	cfg := "paths: { home: /srv/data/homes, groups: /srv/data/teams }\nmode: manage\nprovider: shadow-utils\n"
+	if err := os.WriteFile(filepath.Join(dir, "usersync.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := runCLI(t, bin, dir, "roster"); r.code == 0 || !strings.Contains(r.stderr, "paths.views") {
+		t.Errorf("readers without paths.views were not refused: exit %d\n%s", r.code, r.stderr)
+	}
 }
 
 // read_all comes out resolved, as `all` does: the folders it reaches list it in
-// readers, and it lists them all in views. A consumer that only knows schema 1
-// therefore routes a read_all reader with no change. Without the view namespace
-// alone, the roster is refused rather than failing at apply.
+// readers, and it lists them all in views. A consumer therefore routes a
+// read_all reader exactly as a declared one.
 func TestInterfaceReadAll(t *testing.T) {
 	bin, dir := binary(t), interfaceFixture(t)
 	write := func(name, body string) {
@@ -271,15 +240,8 @@ func TestInterfaceReadAll(t *testing.T) {
 users:
 `, 1))
 
-	cfg := "paths: { home: /srv/data/homes, groups: /srv/data/teams, views: /srv/data/views }\nmode: manage\nprovider: shadow-utils\n"
-	for _, legacy := range []string{"", "legacy_views: true\n"} {
-		write("usersync.yaml", cfg+legacy)
-		if r := runCLI(t, bin, dir, "roster"); r.code == 0 || !strings.Contains(r.stderr, "legacy_views: false") {
-			t.Errorf("read_all with legacy views (%q) was not refused: exit %d\n%s", legacy, r.code, r.stderr)
-		}
-	}
-
-	write("usersync.yaml", cfg+"legacy_views: false\n")
+	// legacy_views: false, left over from the move, still loads.
+	write("usersync.yaml", "paths: { home: /srv/data/homes, groups: /srv/data/teams, views: /srv/data/views }\nlegacy_views: false\nmode: manage\nprovider: shadow-utils\n")
 	r := runCLI(t, bin, dir, "roster")
 	if r.code != 0 {
 		t.Fatalf("roster exited %d\nstderr: %s", r.code, r.stderr)

@@ -81,8 +81,8 @@ func Render(groups []roster.Group, homeBase, groupsBase, viewsBase string) strin
 			// rest. Non-members are turned away at the share, not just at the file.
 			//
 			// Reader groups are deliberately NOT admitted here. A reader reaches
-			// this folder through a read-only view mounted inside their own group
-			// folder, which their own share already serves — so the team's share
+			// this folder through a read-only view in the view namespace, which
+			// their group's [<reader>.read] share serves — so the team's share
 			// stays exactly what its name says, and the read-only half is enforced
 			// by the kernel rather than by `read list`, over SMB and the web alike.
 			fmt.Fprintf(&b, "   valid users = @%s\n", name)

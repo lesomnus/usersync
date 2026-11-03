@@ -112,6 +112,14 @@ func NewCmdWatch() *xli.Command {
 			// (no file) there is nothing to watch.
 			cfgPath := c.Path()
 			last, lastCfg := fileSig(rosterPath), fileSig(cfgPath)
+			// The otel section as written, to tell a real change from the
+			// defaults Build filled into c.Otel at start.
+			var otelAsRead config.OtelConfig
+			if cfgPath != "" {
+				if raw, err := config.ReadFromFile(cfgPath); err == nil {
+					otelAsRead = raw.Otel
+				}
+			}
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			for {
@@ -123,13 +131,16 @@ func NewCmdWatch() *xli.Command {
 					if cfgPath != "" {
 						if sig := fileSig(cfgPath); sig != lastCfg {
 							lastCfg = sig
-							if err := reloadConfig(cmd, c); err != nil {
+							if otelChanged, err := reloadConfig(cmd, c, &otelAsRead); err != nil {
 								if errors.Is(err, errModeChanged) {
 									return err
 								}
 								fmt.Fprintf(errW(cmd), "watch: config not reloaded, kept last good config: %v\n", err)
 							} else {
 								cmd.Println("watch: config changed")
+								if otelChanged {
+									fmt.Fprintln(errW(cmd), "watch: the otel section changed; it takes effect on restart")
+								}
 								changed = true
 							}
 						}
@@ -156,27 +167,31 @@ var errModeChanged = errors.New("watch: mode is no longer manage; exiting so it 
 // reloadConfig reads usersync.yaml again, the way the process did at start
 // (defaults, validation, the command line's overrides), and swaps it into c,
 // which every later cycle reads. A config that does not load leaves c as it was.
-// The otel section is the exception: its pipeline was built at start, so a
-// change there takes a restart.
-func reloadConfig(cmd *xli.Command, c *config.Config) error {
+// The otel section is the exception: its pipeline was built at start, so c keeps
+// the running one, and otelChanged reports a change to it against otelAsRead —
+// the section as last written, not c.Otel, which Build filled with defaults —
+// so the caller can say a restart is needed, once per change.
+func reloadConfig(cmd *xli.Command, c *config.Config, otelAsRead *config.OtelConfig) (otelChanged bool, err error) {
 	nc, err := config.ReadFromFile(c.Path())
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := nc.Evaluate(); err != nil {
-		return err
+		return false, err
 	}
 	if err := applyCommonFlags(cmd, nc); err != nil {
-		return err
+		return false, err
 	}
 	if err := requireManageMode(nc, "watch"); err != nil {
-		return fmt.Errorf("%w: %v", errModeChanged, err)
+		return false, fmt.Errorf("%w: %v", errModeChanged, err)
 	}
-	if !reflect.DeepEqual(nc.Otel, c.Otel) {
-		fmt.Fprintln(errW(cmd), "watch: the otel section changed; it takes effect on restart")
+	if !reflect.DeepEqual(nc.Otel, *otelAsRead) {
+		otelChanged = true
+		*otelAsRead = nc.Otel
 	}
+	nc.Otel = c.Otel
 	*c = *nc
-	return nil
+	return otelChanged, nil
 }
 
 // fileSig is a cheap change signature: mtime + size of a file, following

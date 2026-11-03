@@ -97,9 +97,10 @@ holds no views, so the constraint is gone once `legacy_views` is false
 ([#13](https://github.com/lesomnus/usersync/issues/13)).
 
 `explain` and `plan` report a view that is not where the layout wants it under a
-tagged name: `<r>@partial` (mounted at some active locations, not all) and
-`<r>@stale` (still mounted at a location no longer in use). `apply` converges
-both.
+tagged name: `<r>@partial` (mounted at some active locations, not all),
+`<r>@stale` (still mounted at a location no longer in use) and `<r>@leftover`
+(the view is down but its empty mountpoint is still there). `apply` converges
+all three.
 
 ## 2. SMB shares
 

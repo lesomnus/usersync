@@ -450,3 +450,87 @@ func TestReadReaderViewsAcrossLocations(t *testing.T) {
 		}
 	}
 }
+
+// A mountpoint left behind after its view came down (the removal failed) reads
+// as drift, and converging removes it. Only the exact shape usersync makes
+// counts: an empty directory, viewMode, owned by the mountpoint owner. A
+// person's folder of the same name is never reported nor removed.
+func TestLeftoverMountpoints(t *testing.T) {
+	old := mountpointUID
+	mountpointUID = uint32(os.Getuid())
+	defer func() { mountpointUID = old }()
+
+	root := t.TempDir()
+	groups, views := filepath.Join(root, "teams"), filepath.Join(root, "views")
+	mk := func(p string, mode os.FileMode) string {
+		t.Helper()
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	mk(filepath.Join(groups, "sim"), 0o770)
+	mk(filepath.Join(groups, "rl"), 0o770)
+	leftover := mk(filepath.Join(groups, "sim-ro", "sim"), viewMode)
+	// A person's folder named like a team: not ours, by mode.
+	persons := mk(filepath.Join(groups, "sim-ro", "rl"), 0o770)
+	// Ours by shape but not empty: not ours either.
+	full := mk(filepath.Join(groups, "ops", "sim"), 0o755)
+	if err := os.WriteFile(filepath.Join(full, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(full, viewMode); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(full, 0o755) // so TempDir can clean up
+	mk(filepath.Join(views, "sim-ro"), 0o750)
+
+	p := filepath.Join(t.TempDir(), "mountinfo")
+	if err := os.WriteFile(p, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldMounts := mountsFile
+	mountsFile = p
+	defer func() { mountsFile = oldMounts }()
+
+	done := ViewLayout{Groups: groups, Views: views}
+	got, err := OS{}.ReadReaderViews(done)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string][]string{"sim": {"sim-ro@leftover"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("views = %v; want %v", got, want)
+	}
+
+	if err := sweepLeftoverPoints(groups, groups, "sim", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+		t.Errorf("the leftover mountpoint %s is still there (%v)", leftover, err)
+	}
+	for _, kept := range []string{persons, full} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s was removed: %v", kept, err)
+		}
+	}
+	got, err = OS{}.ReadReaderViews(done)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("after sweeping views = %v; want none", got)
+	}
+
+	// A reader still declared at an active location keeps its mountpoint: the
+	// view is about to be mounted over it.
+	mk(filepath.Join(views, "sim-ro", "sim"), viewMode)
+	if err := sweepLeftoverPoints(groups, views, "sim", map[string]ReaderGroup{"sim-ro": {Name: "sim-ro"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(views, "sim-ro", "sim")); err != nil {
+		t.Errorf("a declared reader's mountpoint was removed: %v", err)
+	}
+}

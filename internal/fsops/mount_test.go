@@ -150,6 +150,27 @@ func TestMountViewsThroughTheTransition(t *testing.T) {
 		t.Errorf("the legacy mountpoint %s is still there (%v)", oldPoint, err)
 	}
 
+	// A mountpoint that outlived its view (its removal failed) is drift, and
+	// converging removes it.
+	if err := os.Mkdir(oldPoint, viewMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(oldPoint, viewMode); err != nil {
+		t.Fatal(err)
+	}
+	if got := readViews(done); !reflect.DeepEqual(got, []string{"sim-ro", "sim-ro@leftover"}) {
+		t.Fatalf("with a leftover mountpoint = %v; want [sim-ro sim-ro@leftover]", got)
+	}
+	if err := fs.EnsureReaderViews(done, "sim", mountTeamGID, reader); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if _, err := os.Stat(oldPoint); !os.IsNotExist(err) {
+		t.Errorf("the leftover mountpoint %s is still there (%v)", oldPoint, err)
+	}
+	if got := readViews(done); !reflect.DeepEqual(got, []string{"sim-ro"}) {
+		t.Fatalf("after sweeping = %v", got)
+	}
+
 	// 4. Revocation: no readers, no views anywhere.
 	if err := fs.EnsureReaderViews(done, "sim", mountTeamGID, nil); err != nil {
 		t.Fatalf("revoke: %v", err)

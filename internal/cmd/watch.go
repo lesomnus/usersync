@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 
+	"github.com/lesomnus/usersync/internal/cmd/config"
 	"github.com/lesomnus/usersync/internal/run"
 	"github.com/lesomnus/usersync/internal/smbconf"
 	"github.com/lesomnus/xli"
@@ -15,14 +18,14 @@ import (
 
 // `usersync watch` is the boot-and-hot-reload loop as a command.
 //
-// It applies the roster now, then reconciles again each time the file changes —
-// the same cycle the container entrypoint used to drive from bash + inotifywait,
-// owned by usersync instead so the reconcile loop is ONE implementation with one
+// It applies the roster now, then reconciles again each time it or usersync.yaml
+// changes — the same cycle the container entrypoint used to drive from bash +
+// inotifywait, owned by usersync instead so the reconcile loop is ONE implementation with one
 // set of guarantees (validate-before-apply, the run lock, degrade-not-die on a
 // missing quota backend). With --reload-smb it also rewrites smb.conf and reloads
 // smbd each cycle — what an SMB-server container runs.
 //
-// Change detection is a poll of the roster's stat, not a filesystem-notify
+// Change detection is a poll of the two files' stat, not a filesystem-notify
 // dependency, keeping the single-static-binary property: a ConfigMap update
 // repoints the file to a new inode, so its mtime changes and the poll catches
 // it. A roster that fails to load is logged and skipped, leaving the last good
@@ -31,7 +34,7 @@ func NewCmdWatch() *xli.Command {
 	return &xli.Command{
 		Name:  "watch",
 		Brief: "apply the roster, then reconcile on every change (long-running)",
-		Synop: "For a container: applies the roster now and re-applies each time it changes, keeping the last good state when a change does not load. --reload-smb also rewrites smb.conf and reloads smbd each cycle.",
+		Synop: "For a container: applies the roster now and re-applies each time it or usersync.yaml changes, keeping the last good state when a change does not load. A config that leaves manage mode stops it. --reload-smb also rewrites smb.conf and reloads smbd each cycle.",
 
 		Flags: append(applyFlags(),
 			&flg.Switch{Name: "reload-smb", Brief: "also rewrite smb.conf and reload smbd each cycle"},
@@ -102,7 +105,13 @@ func NewCmdWatch() *xli.Command {
 			cmd.Println("watch: initial apply")
 			cycle()
 
-			last := rosterSig(rosterPath)
+			// usersync.yaml is watched too, and reloaded in place. A ConfigMap
+			// updates both files at once, and a config change read only at start
+			// would wait for the next restart while looking applied — as
+			// `legacy_views: false` did (usersync#13). With the default config
+			// (no file) there is nothing to watch.
+			cfgPath := c.Path()
+			last, lastCfg := fileSig(rosterPath), fileSig(cfgPath)
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			for {
@@ -110,9 +119,27 @@ func NewCmdWatch() *xli.Command {
 				case <-ctx.Done():
 					return nil
 				case <-ticker.C:
-					if sig := rosterSig(rosterPath); sig != last {
+					changed := false
+					if cfgPath != "" {
+						if sig := fileSig(cfgPath); sig != lastCfg {
+							lastCfg = sig
+							if err := reloadConfig(cmd, c); err != nil {
+								if errors.Is(err, errModeChanged) {
+									return err
+								}
+								fmt.Fprintf(errW(cmd), "watch: config not reloaded, kept last good config: %v\n", err)
+							} else {
+								cmd.Println("watch: config changed")
+								changed = true
+							}
+						}
+					}
+					if sig := fileSig(rosterPath); sig != last {
 						last = sig
 						cmd.Println("watch: roster changed")
+						changed = true
+					}
+					if changed {
 						cycle()
 					}
 				}
@@ -121,11 +148,45 @@ func NewCmdWatch() *xli.Command {
 	}
 }
 
-// rosterSig is a cheap change signature: mtime + size of the roster, following
+// errModeChanged stops watch: a config that leaves manage mode is not one watch
+// can keep running under, so it exits and the supervisor starts what the new
+// mode calls for.
+var errModeChanged = errors.New("watch: mode is no longer manage; exiting so it restarts under the new config")
+
+// reloadConfig reads usersync.yaml again, the way the process did at start
+// (defaults, validation, the command line's overrides), and swaps it into c,
+// which every later cycle reads. A config that does not load leaves c as it was.
+// The otel section is the exception: its pipeline was built at start, so a
+// change there takes a restart.
+func reloadConfig(cmd *xli.Command, c *config.Config) error {
+	nc, err := config.ReadFromFile(c.Path())
+	if err != nil {
+		return err
+	}
+	if err := nc.Evaluate(); err != nil {
+		return err
+	}
+	if err := applyCommonFlags(cmd, nc); err != nil {
+		return err
+	}
+	if err := requireManageMode(nc, "watch"); err != nil {
+		return fmt.Errorf("%w: %v", errModeChanged, err)
+	}
+	if !reflect.DeepEqual(nc.Otel, c.Otel) {
+		fmt.Fprintln(errW(cmd), "watch: the otel section changed; it takes effect on restart")
+	}
+	*c = *nc
+	return nil
+}
+
+// fileSig is a cheap change signature: mtime + size of a file, following
 // symlinks (a ConfigMap swap repoints the file to a new inode with a new mtime,
-// so this changes). An unreadable roster returns a distinct value, so its later
+// so this changes). An unreadable file returns a distinct value, so its later
 // reappearance reads as a change.
-func rosterSig(path string) string {
+func fileSig(path string) string {
+	if path == "" {
+		return ""
+	}
 	fi, err := os.Stat(path)
 	if err != nil {
 		return "missing"

@@ -94,8 +94,9 @@ func (l ViewLayout) bases() (active, inactive []string) {
 // wants it is reported under a tagged name, which never equals a declared
 // reader — so the reconciler sees drift and converges, and `explain` shows why.
 const (
-	viewPartial = "@partial" // mounted at some active locations, not all
-	viewStale   = "@stale"   // mounted at a location that is no longer active
+	viewPartial  = "@partial"  // mounted at some active locations, not all
+	viewStale    = "@stale"    // mounted at a location that is no longer active
+	viewLeftover = "@leftover" // an empty mountpoint usersync made, with no view on it
 )
 
 // idmapSpec builds the `X-mount.idmap` mapping that makes files owned by
@@ -217,9 +218,110 @@ func (o OS) ReadReaderViews(l ViewLayout) (map[string][]string, error) {
 				out[team] = append(out[team], r+viewStale)
 			}
 		}
+	}
+
+	// A mountpoint whose view is gone but which is still there is drift too:
+	// apply removes it. Without this it would outlive a failed removal forever,
+	// because nothing else reads as a change once the mount is down.
+	isMounted := mountedPoints(mounts)
+	for _, base := range append(append([]string{}, active...), inactive...) {
+		left, err := leftoverPoints(l.Groups, base, "", isMounted)
+		if err != nil {
+			return nil, err
+		}
+		for team, readers := range left {
+			for _, r := range readers {
+				out[team] = append(out[team], r+viewLeftover)
+			}
+		}
+	}
+	for team := range out {
 		sort.Strings(out[team])
 	}
 	return out, nil
+}
+
+// mountedPoints is the set of paths something is mounted on.
+func mountedPoints(mounts []mountEntry) map[string]bool {
+	out := make(map[string]bool, len(mounts))
+	for _, m := range mounts {
+		out[filepath.Clean(m.point)] = true
+	}
+	return out
+}
+
+// leftoverPoints finds, under base, the mountpoints usersync made that nothing
+// is mounted on: <base>/<reader>/<team> for every team folder under groupsBase
+// (only team, if it is not empty), keyed by team.
+//
+// A mountpoint is normally removed right after its view is unmounted. When that
+// removal fails — the unmount fell back to a lazy detach and the directory was
+// still busy, say — the directory stays: empty, root-owned, viewMode. Only that
+// exact shape counts. People cannot make a root-owned directory, so this never
+// takes one of theirs; anything else under a reader's folder is left alone.
+func leftoverPoints(groupsBase, base, team string, isMounted map[string]bool) (map[string][]string, error) {
+	teams := map[string]bool{}
+	if team != "" {
+		teams[team] = true
+	} else {
+		entries, err := os.ReadDir(groupsBase)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				teams[e.Name()] = true
+			}
+		}
+	}
+	readers, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, r := range readers {
+		if !r.IsDir() {
+			continue
+		}
+		for t := range teams {
+			if t == r.Name() {
+				continue
+			}
+			point := ViewPath(base, t, r.Name())
+			if isMounted[filepath.Clean(point)] || !isLeftoverPoint(point) {
+				continue
+			}
+			out[t] = append(out[t], r.Name())
+		}
+	}
+	return out, nil
+}
+
+// mountpointUID is who owns a mountpoint usersync made. A variable so the
+// leftover rules can be tested without root.
+var mountpointUID uint32 = 0
+
+// isLeftoverPoint reports whether point is an empty directory of the exact shape
+// ensureMountpoint leaves: owned by root, viewMode.
+func isLeftoverPoint(point string) bool {
+	fi, err := os.Lstat(point)
+	if err != nil || !fi.IsDir() || fi.Mode().Perm() != viewMode {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid != mountpointUID {
+		return false
+	}
+	f, err := os.Open(point)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	names, _ := f.Readdirnames(1)
+	return len(names) == 0
 }
 
 // viewPresents reports whether the mount at point shows the reader group's own
@@ -326,8 +428,15 @@ func (o OS) convergeViews(mounts []mountEntry, groupsBase, base, team string, te
 			return err
 		}
 		// The mountpoint is ours and empty by construction, so removing it leaves
-		// the folder holding it as it was before the grant.
+		// the folder holding it as it was before the grant. A failure here is
+		// retried by the sweep below, which reports it.
 		_ = os.Remove(m.point)
+	}
+
+	// Remove the mountpoints of this team's views that are gone: the ones just
+	// unmounted whose removal failed, and any an earlier run left behind.
+	if err := sweepLeftoverPoints(groupsBase, base, team, want); err != nil {
+		return err
 	}
 
 	for _, r := range readers {
@@ -338,6 +447,28 @@ func (o OS) convergeViews(mounts []mountEntry, groupsBase, base, team string, te
 		}
 		if err := o.ensureView(groupsBase, base, team, teamGID, r, mounted[r.Name]); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// sweepLeftoverPoints removes team's leftover mountpoints under base, except
+// those of readers still wanted there (ensureView mounts over those).
+func sweepLeftoverPoints(groupsBase, base, team string, want map[string]ReaderGroup) error {
+	mounts, err := readMounts()
+	if err != nil {
+		return err
+	}
+	left, err := leftoverPoints(groupsBase, base, team, mountedPoints(mounts))
+	if err != nil {
+		return err
+	}
+	for _, r := range left[team] {
+		if _, keep := want[r]; keep {
+			continue
+		}
+		if err := os.Remove(ViewPath(base, team, r)); err != nil {
+			return fmt.Errorf("remove the mountpoint of a view that is gone: %w", err)
 		}
 	}
 	return nil

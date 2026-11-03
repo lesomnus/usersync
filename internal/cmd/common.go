@@ -96,6 +96,9 @@ func loadRoster(cmd *xli.Command, c *config.Config, cls *idrange.Classifier) (*r
 	if err != nil {
 		return nil, nil, z.Err(err, "validate roster %q", path)
 	}
+	if err := checkReadAll(ro, c); err != nil {
+		return nil, nil, z.Err(err, "validate roster %q", path)
+	}
 	// Narrowed explicitly. Validate no longer does it as a side effect, so a
 	// caller that wants the whole declaration (to write it back) can have it.
 	return ro.Managed(cls), skipped, nil
@@ -310,4 +313,25 @@ func collectActual(ctx context.Context, c *config.Config, r run.Runner, cls *idr
 		Warn:        warn,
 		Quota:       qc,
 	})
+}
+
+// checkReadAll refuses read_all unless views are only in the view namespace. A
+// read_all group reads reader groups too, and at the legacy location a reader
+// group's folder holds views, which an id-mapped mount cannot map again — so
+// the grant would fail at apply, after a validate that passed (usersync#13).
+func checkReadAll(ro *roster.Roster, c *config.Config) error {
+	if !ro.HasReadAll() {
+		return nil
+	}
+	if l := c.ViewLayout(); l.Views == "" || l.Legacy {
+		return fmt.Errorf("read_all needs the view namespace only: set paths.views and legacy_views: false in %s", configName(c))
+	}
+	return nil
+}
+
+func configName(c *config.Config) string {
+	if p := c.Path(); p != "" {
+		return p
+	}
+	return "usersync.yaml"
 }

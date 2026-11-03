@@ -156,8 +156,9 @@ const ReadShareSuffix = roster.ReadShareSuffix
 // every mount beneath it, and only the reader group connects.
 func renderViewShares(b *strings.Builder, gs []roster.Group, viewsBase string) {
 	reads := map[string][]string{}
+	all := roster.Roster{Groups: gs} // GroupReaders resolves read_all over these
 	for _, t := range gs {
-		for _, r := range t.Readers {
+		for _, r := range all.GroupReaders(t) {
 			reads[r] = append(reads[r], t.Name)
 		}
 	}

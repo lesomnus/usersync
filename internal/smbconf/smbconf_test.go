@@ -375,3 +375,20 @@ func TestRenderReadShares(t *testing.T) {
 		t.Errorf("without a view namespace no read share may appear")
 	}
 }
+
+// A read_all group gets its read share like any reader, over every folder it
+// reaches.
+func TestRenderReadShareForReadAll(t *testing.T) {
+	gs := []roster.Group{
+		{Name: "audit", GID: 10090, ReadAll: true},
+		{Name: "rl", GID: 10014},
+		{Name: "sim", GID: 10017},
+	}
+	read, ok := sections(Render(gs, "/h", "/g", "/v"))["audit.read"]
+	if !ok {
+		t.Fatal("no [audit.read]")
+	}
+	if read["path"] != "/v/audit" || !strings.Contains(read["comment"], "rl, sim") {
+		t.Errorf("[audit.read] = %v", read)
+	}
+}

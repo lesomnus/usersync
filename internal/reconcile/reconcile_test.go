@@ -775,3 +775,28 @@ func TestHomeFalse(t *testing.T) {
 		t.Error("home: false user must never drift into EnsureHome")
 	}
 }
+
+// A read_all group is mounted on every folder it reaches, through the same
+// SetGroupReaders a declared reader gets.
+func TestReadAllEmitsSetGroupReaders(t *testing.T) {
+	d := &roster.Roster{
+		Groups: []roster.Group{
+			{Name: "audit", GID: 7090, ReadAll: true},
+			{Name: "perception", GID: 7001, Readers: []string{"perception-ro"}},
+			{Name: "perception-ro", GID: 7011},
+		},
+	}
+	want := map[string][]fsops.ReaderGroup{
+		"perception":    {{Name: "audit", GID: 7090}, {Name: "perception-ro", GID: 7011}},
+		"perception-ro": {{Name: "audit", GID: 7090}},
+	}
+	got := map[string][]fsops.ReaderGroup{}
+	for _, a := range Reconcile(d, state.New(), cls()) {
+		if a.Kind == SetGroupReaders {
+			got[a.Name] = a.Readers
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("SetGroupReaders = %v; want %v", got, want)
+	}
+}

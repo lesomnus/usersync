@@ -143,10 +143,11 @@ reviewed and committed.
 | `groups[].name` / `gid` | string / uint32 | |
 | `groups[].description` | string, omitted if empty | display only |
 | `groups[].owners` | string[] | users who may change the membership |
-| `groups[].readers` | string[] | groups granted a read-only view of this group's folder (1.1), **as declared** |
+| `groups[].readers` | string[] | groups granted a read-only view of this group's folder (1.1): as declared, then every `read_all` group that reaches it. A consumer never expands `read_all` itself. |
 | `groups[].views` | `{team, path}[]` | the other side: the teams **this** group may read, sorted by team, each with the absolute path of its view: in `<views>` once `paths.views` is set (also during the move), the legacy location otherwise. A consumer opens `path` as given. |
 | `groups[].members` | string[] | for an ordinary group, as declared (a disabled user is still listed). For an `all` group, the **resolved cohort**: active users of that profile. A consumer never expands `all` itself. |
 | `groups[].all` | bool, omitted if false | a display hint that `members` is a cohort |
+| `groups[].read_all` | bool, omitted if false | a display hint that this group reads every group it reaches, and is listed in their `readers` |
 | `groups[].anonymous` | `"none"` \| `"read"` \| `"write"` | unauthenticated (web) access to the folder |
 | `users[].name` / `uid` | string / uint32 | |
 | `users[].full_name` | string, omitted if empty | |

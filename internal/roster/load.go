@@ -191,7 +191,14 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 	// the reader group's OWN folder and maps to its gid, so a name that is not
 	// declared has neither — there would be nowhere to put the view and no id to
 	// map to. It is a refusal to load, exactly as an undeclared owner is.
+	groupByName := make(map[string]Group, len(ro.Groups))
 	for _, g := range ro.Groups {
+		groupByName[g.Name] = g
+	}
+	for _, g := range ro.Groups {
+		if g.ReadAll && g.ReadAllExempt {
+			errs = append(errs, fmt.Errorf("group %q is both read_all and read_all_exempt; a read_all group never reads itself, so remove read_all_exempt", g.Name))
+		}
 		// A reader group is a read-only grant. On a folder already open to the
 		// world (anonymous read or write), that grant adds nothing and, worse,
 		// contradicts the intent — so the two are refused together rather than one
@@ -213,6 +220,8 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 				errs = append(errs, fmt.Errorf("group %q lists reader %q twice", g.Name, r))
 			case !seenGroupName[r]:
 				errs = append(errs, fmt.Errorf("group %q reader %q is not a group in this roster", g.Name, r))
+			case readAllReaches(groupByName[r], g):
+				errs = append(errs, fmt.Errorf("group %q lists reader %q, which is read_all and reads it already — remove it from readers", g.Name, r))
 			}
 			seenReader[r] = true
 		}

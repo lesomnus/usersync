@@ -41,15 +41,16 @@ func mergeGroups(desired, preserved []string) []string {
 	return out
 }
 
-// resolveReaders pairs a group's declared reader NAMES with their gids from the
+// resolveReaders pairs a group's reader NAMES (declared, and read_all —
+// roster.GroupReaders) with their gids from the
 // roster's own group table, sorted by name and de-duplicated so the result
 // compares directly against the view names read back from the mount table. A
 // name with no gid is skipped here because load-time Validate already refuses an
 // undeclared reader, so this cannot silently drop a real one.
-func resolveReaders(g roster.Group, gidOf map[string]uint32) []fsops.ReaderGroup {
+func resolveReaders(names []string, gidOf map[string]uint32) []fsops.ReaderGroup {
 	seen := map[string]bool{}
 	var out []fsops.ReaderGroup
-	for _, name := range g.Readers {
+	for _, name := range names {
 		gid, ok := gidOf[name]
 		if !ok || seen[name] {
 			continue
@@ -346,7 +347,7 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 		// view lives in the READER's folder, and that folder is made by the
 		// reader's own CreateGroup, which is emitted by a later iteration of this
 		// loop whenever the reader sorts after the team.
-		wantReaders := resolveReaders(g, desiredGroupGID)
+		wantReaders := resolveReaders(desired.GroupReaders(g), desiredGroupGID)
 		wantNames := readerNames(wantReaders)
 		switch {
 		case len(wantReaders) == 0 && (!ok || !cur.ReaderViewsKnown):
@@ -355,12 +356,12 @@ func Reconcile(desired *roster.Roster, actual *state.State, cls *idrange.Classif
 			if len(wantReaders) > 0 {
 				readerActions = append(readerActions, Action{Kind: SetGroupReaders, Name: g.Name, GID: g.GID,
 					Readers: wantReaders,
-					Reason:  reasonf("readers %v declared on a new group", g.Readers)})
+					Reason:  reasonf("readers %v declared on a new group", wantNames)})
 			}
 		case !slices.Equal(wantNames, cur.ReaderViews):
 			readerActions = append(readerActions, Action{Kind: SetGroupReaders, Name: g.Name, GID: g.GID,
 				Readers: wantReaders,
-				Reason:  reasonf("readers %v declared, %v mounted", g.Readers, cur.ReaderViews)})
+				Reason:  reasonf("readers %v declared, %v mounted", wantNames, cur.ReaderViews)})
 		case len(cur.LegacyReaderGIDs) > 0:
 			// The views are right, but the folder still carries the ACL entries an
 			// older version granted readers with. They are a second, independent

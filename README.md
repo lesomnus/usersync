@@ -217,6 +217,31 @@ location, `legacy_views: false` takes those views down, and with them the one
 case the old layout could not do: giving a reader group readers of its own
 (usersync#13). A group name may not end in `.read`.
 
+#### Reading everything: `read_all`
+
+A group that should read every folder — an auditor, a backup operator — says so
+once instead of being added to every team's `readers`:
+
+```yaml
+groups:
+  - name: all-teams-reader
+    gid: 10030
+    read_all: true          # a reader of every other group, new ones included
+  - name: wed-test
+    gid: 10026
+    read_all_exempt: true   # but not this one
+```
+
+It is the same read-only view a declared reader gets, one per folder, and it
+reaches every group except itself, those open to the world already
+(`anonymous`), and those marked `read_all_exempt`. Naming a `read_all` group in a
+`readers` list it reaches anyway is refused as redundant. `roster` lists it in
+the `readers` of every folder it reaches, as `all` is resolved into `members`.
+
+It needs `paths.views` with `legacy_views: false`: it reads reader groups too,
+which the legacy location cannot do. Every command that loads the roster
+refuses it otherwise.
+
 ### Editing membership from a program
 
 `usersync member` is for callers that are not a person — a web UI, a script. It

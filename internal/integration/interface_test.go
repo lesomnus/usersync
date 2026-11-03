@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -244,5 +245,93 @@ provider: shadow-utils
 	}
 	if strings.Contains(s.stdout, "[team-a.read]") {
 		t.Errorf("[team-a.read] rendered, but team-a reads nothing")
+	}
+}
+
+// read_all comes out resolved, as `all` does: the folders it reaches list it in
+// readers, and it lists them all in views. A consumer that only knows schema 1
+// therefore routes a read_all reader with no change. Without the view namespace
+// alone, the roster is refused rather than failing at apply.
+func TestInterfaceReadAll(t *testing.T) {
+	bin, dir := binary(t), interfaceFixture(t)
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "roster.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("roster.yaml", strings.Replace(string(b), "users:\n", `  - name: audit
+    gid: 10090
+    read_all: true
+    members: [skim]
+users:
+`, 1))
+
+	cfg := "paths: { home: /srv/data/homes, groups: /srv/data/teams, views: /srv/data/views }\nmode: manage\nprovider: shadow-utils\n"
+	for _, legacy := range []string{"", "legacy_views: true\n"} {
+		write("usersync.yaml", cfg+legacy)
+		if r := runCLI(t, bin, dir, "roster"); r.code == 0 || !strings.Contains(r.stderr, "legacy_views: false") {
+			t.Errorf("read_all with legacy views (%q) was not refused: exit %d\n%s", legacy, r.code, r.stderr)
+		}
+	}
+
+	write("usersync.yaml", cfg+"legacy_views: false\n")
+	r := runCLI(t, bin, dir, "roster")
+	if r.code != 0 {
+		t.Fatalf("roster exited %d\nstderr: %s", r.code, r.stderr)
+	}
+	var out struct {
+		Groups []struct {
+			Name    string   `json:"name"`
+			Readers []string `json:"readers"`
+			ReadAll bool     `json:"read_all"`
+			Views   []struct {
+				Team, Path string
+			} `json:"views"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &out); err != nil {
+		t.Fatalf("roster stdout is not JSON: %v\n%s", err, r.stdout)
+	}
+	readers, views := map[string][]string{}, []string{}
+	for _, g := range out.Groups {
+		readers[g.Name] = g.Readers
+		if g.Name == "audit" {
+			if !g.ReadAll {
+				t.Error("audit lacks read_all: true")
+			}
+			for _, v := range g.Views {
+				views = append(views, v.Team+"="+v.Path)
+			}
+		}
+	}
+	want := map[string][]string{
+		"team-a":    {"team-a-ro", "audit"},
+		"team-a-ro": {"audit"},
+		"everyone":  {"audit"},
+		"public":    {}, // world-open already
+		"audit":     {},
+	}
+	for g, w := range want {
+		if !reflect.DeepEqual(readers[g], w) {
+			t.Errorf("%s readers = %v; want %v", g, readers[g], w)
+		}
+	}
+	wantViews := []string{
+		"everyone=/srv/data/views/audit/everyone",
+		"team-a=/srv/data/views/audit/team-a",
+		"team-a-ro=/srv/data/views/audit/team-a-ro",
+	}
+	if !reflect.DeepEqual(views, wantViews) {
+		t.Errorf("audit views = %v; want %v", views, wantViews)
+	}
+
+	s := runCLI(t, bin, dir, "shares")
+	if s.code != 0 || !strings.Contains(s.stdout, "[audit.read]") {
+		t.Errorf("no [audit.read] (exit %d):\n%s%s", s.code, s.stdout, s.stderr)
 	}
 }

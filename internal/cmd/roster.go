@@ -104,6 +104,9 @@ type groupView struct {
 	Views   []viewEntry `json:"views"`
 	Members []string    `json:"members"`
 	All     bool        `json:"all,omitempty"`
+	// ReadAll is a display hint, as All is: this group reads every group it
+	// reaches, and those already list it in their Readers.
+	ReadAll bool `json:"read_all,omitempty"`
 	// Anonymous is the folder's unauthenticated-access level: "none", "read", or
 	// "write". darak reads this to decide which folders to show anonymous
 	// visitors and whether the anonymous helper may write.
@@ -133,14 +136,18 @@ func newRosterView(ro *roster.Roster, homeBase string, l fsops.ViewLayout) roste
 			GID:         g.GID,
 			Description: g.Description,
 			Owners:      nonNilStrings(g.Owners),
-			Readers:     nonNilStrings(g.Readers),
-			Views:       nonNilViews(views[g.Name]),
+			// Resolved, as Members is: read_all groups are listed on every
+			// folder they read, so a consumer reads one list and never expands
+			// read_all itself.
+			Readers: nonNilStrings(ro.GroupReaders(g)),
+			Views:   nonNilViews(views[g.Name]),
 			// Resolved: for an `all` group this is the concrete cohort (every active
 			// user, or the profile's cohort), so a consumer reads one member list and
 			// never expands `all` itself. `all` stays a display hint below.
 			Members:   nonNilStrings(ro.GroupMembership(g)),
 			Anonymous: g.Anonymous.String(),
 			All:       g.All.IsSet(),
+			ReadAll:   g.ReadAll,
 		})
 	}
 	for _, u := range ro.Users {
@@ -168,7 +175,7 @@ func newRosterView(ro *roster.Roster, homeBase string, l fsops.ViewLayout) roste
 func viewsByReader(ro *roster.Roster, l fsops.ViewLayout) map[string][]viewEntry {
 	out := map[string][]viewEntry{}
 	for _, t := range ro.Groups {
-		for _, r := range t.Readers {
+		for _, r := range ro.GroupReaders(t) {
 			out[r] = append(out[r], viewEntry{Team: t.Name, Path: l.Path(t.Name, r)})
 		}
 	}

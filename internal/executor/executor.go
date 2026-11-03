@@ -28,6 +28,9 @@ const DefaultShell = "/usr/sbin/nologin"
 type CollectOpts struct {
 	HomeBase   string
 	GroupsBase string
+	// Views is where reader views are kept. Its zero value means the legacy
+	// location only, under GroupsBase.
+	Views fsops.ViewLayout
 	// FS, if set, is used to record whether each managed home/group directory
 	// exists so the reconciler can heal a missing one.
 	FS fsops.FS
@@ -101,7 +104,7 @@ func Collect(ctx context.Context, p provider.Provider, s samba.Samba, cls *idran
 	var views map[string][]string
 	viewsKnown := false
 	if opts.FS != nil {
-		v, err := opts.FS.ReadReaderViews(opts.GroupsBase)
+		v, err := opts.FS.ReadReaderViews(layoutOf(opts.Views, opts.GroupsBase))
 		if err == nil {
 			views, viewsKnown = v, true
 		} else if opts.Warn != nil {
@@ -169,7 +172,9 @@ type Deps struct {
 	Quota      quota.Controller // required for SetUserQuota / ClearUserQuota actions
 	HomeBase   string
 	GroupsBase string
-	Shell      string // defaults to DefaultShell if empty
+	// Views is where reader views are kept; zero means the legacy location only.
+	Views fsops.ViewLayout
+	Shell string // defaults to DefaultShell if empty
 
 	// PosixOnly runs the account half of each action and skips the half the SMB
 	// server owns: a CreateGroup makes the group but not its folder, a CreateUser
@@ -237,7 +242,7 @@ func (d Deps) one(ctx context.Context, a reconcile.Action) error {
 		// has to make its own — and unlike the folders, there is nothing here to
 		// race over: the mount is namespace-local and the only thing written to
 		// the shared tree is one empty directory to mount over.
-		return d.FS.EnsureReaderViews(d.GroupsBase, a.Name, a.GID, a.Readers)
+		return d.FS.EnsureReaderViews(layoutOf(d.Views, d.GroupsBase), a.Name, a.GID, a.Readers)
 
 	case reconcile.SetGroupAdmins:
 		// A backend with no gshadow reports ErrUnsupported. That is not a failed
@@ -350,4 +355,16 @@ func (d Deps) initPW(user string) (string, error) {
 		return "", fmt.Errorf("no seed configured: cannot derive initial password (set seed_file or USERSYNC_SEED)")
 	}
 	return d.Deriver.InitPW(user), nil
+}
+
+// layoutOf fills in a layout's groups base when it was left zero, so a caller
+// that predates layouts gets the legacy location it always had.
+func layoutOf(l fsops.ViewLayout, groupsBase string) fsops.ViewLayout {
+	if l.Groups == "" {
+		l.Groups = groupsBase
+	}
+	if l.Views == "" {
+		l.Legacy = true
+	}
+	return l
 }

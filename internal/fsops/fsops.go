@@ -40,13 +40,13 @@ type FS interface {
 	// roster would keep the access the ACL still gives them.
 	ReadReaderGIDs(path string) ([]uint32, error)
 
-	// ReadReaderViews returns, per group folder name under groupsBase, the
-	// reader groups that currently hold a working read-only view of it.
-	ReadReaderViews(groupsBase string) (map[string][]string, error)
+	// ReadReaderViews returns, per team folder, the reader groups that currently
+	// hold a working read-only view of it at every active location of the layout.
+	ReadReaderViews(l ViewLayout) (map[string][]string, error)
 	// EnsureReaderViews makes readers exactly the groups holding a read-only
 	// view of the team's folder, and clears any reader ACL left on the folder
 	// itself by an older version.
-	EnsureReaderViews(groupsBase, team string, teamGID uint32, readers []ReaderGroup) error
+	EnsureReaderViews(l ViewLayout, team string, teamGID uint32, readers []ReaderGroup) error
 }
 
 // OS is the real filesystem implementation.

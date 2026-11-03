@@ -55,11 +55,11 @@ func NewCmdExplain() *xli.Command {
 			// A failure here is reported rather than fatal: "the mount table could
 			// not be read" is itself part of the answer, and printing the declared
 			// side is still worth more than an error.
-			views, viewsErr := fs.ReadReaderViews(c.Paths.Groups)
+			views, viewsErr := fs.ReadReaderViews(c.ViewLayout())
 
 			out := make([]groupExplain, 0, len(groups))
 			for _, g := range groups {
-				out = append(out, explainGroup(fs, ro, c.Paths.Groups, g, views))
+				out = append(out, explainGroup(fs, ro, c.ViewLayout(), g, views))
 			}
 			if jsonRequested(cmd) {
 				enc := json.NewEncoder(cmd)
@@ -148,8 +148,8 @@ type groupExplain struct {
 	LegacyACLGIDs []uint32 `json:"legacy_acl_gids,omitempty"`
 }
 
-func explainGroup(fs fsops.OS, ro *roster.Roster, groupsBase string, g roster.Group, views map[string][]string) groupExplain {
-	folder := filepath.Join(groupsBase, g.Name)
+func explainGroup(fs fsops.OS, ro *roster.Roster, l fsops.ViewLayout, g roster.Group, views map[string][]string) groupExplain {
+	folder := filepath.Join(l.Groups, g.Name)
 	e := groupExplain{
 		Name:      g.Name,
 		GID:       g.GID,
@@ -178,7 +178,7 @@ func explainGroup(fs fsops.OS, ro *roster.Roster, groupsBase string, g roster.Gr
 		e.Readers = append(e.Readers, readerExplain{
 			Name:    r,
 			GID:     gidOf[r],
-			View:    fsops.ViewPath(groupsBase, g.Name, r),
+			View:    l.Path(g.Name, r),
 			Mounted: mounted[r],
 		})
 	}

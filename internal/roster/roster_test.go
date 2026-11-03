@@ -449,3 +449,16 @@ func TestReadersAcceptedWhenDeclared(t *testing.T) {
 		t.Fatalf("a valid reader declaration was rejected: %v", err)
 	}
 }
+
+// `.read` closes the name of a reader group's read-only share ([<reader>.read]),
+// so no group may end in it.
+func TestReadShareSuffixIsReserved(t *testing.T) {
+	ro := &Roster{Groups: []Group{{Name: "sim.read", GID: 7001}}}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err == nil {
+		t.Error("a group named sim.read must be rejected")
+	}
+	ro = &Roster{Groups: []Group{{Name: "sim.reader", GID: 7001}}}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err != nil {
+		t.Errorf("sim.reader only contains the suffix, it does not end in it: %v", err)
+	}
+}

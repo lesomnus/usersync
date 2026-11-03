@@ -192,6 +192,31 @@ What follows from that:
 actually mounted — the question `getfacl` used to answer for free, now that the
 answer is split between the roster and the mount table.
 
+#### Where views live: `paths.views`
+
+The view above sits inside the reader group's own folder, next to whatever its
+members put there, and is told apart by its name. Setting `paths.views` gives
+views a namespace of their own, and a share to reach them by:
+
+```yaml
+paths:
+  groups: /srv/data/teams
+  views: /srv/data/views      # outside groups and home
+# legacy_views: true         # the default: keep the old views too, while people move
+```
+
+```
+the view      <views>/team-a-ro/team-a      read-only, as before
+its folder    <views>/team-a-ro             root:team-a-ro 0750 — only the group enters, nobody writes
+its share     [team-a-ro.read]              read only, @team-a-ro
+```
+
+`roster` then reports the new path, so a program that opens what it is given
+moves at once. People move to the `.read` share. When nobody uses the old
+location, `legacy_views: false` takes those views down, and with them the one
+case the old layout could not do: giving a reader group readers of its own
+(usersync#13). A group name may not end in `.read`.
+
 ### Editing membership from a program
 
 `usersync member` is for callers that are not a person — a web UI, a script. It

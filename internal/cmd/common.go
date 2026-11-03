@@ -247,18 +247,19 @@ func (printFS) Stat(string) (bool, uint32, uint32, uint32) { return false, 0, 0,
 
 func (printFS) ReadReaderGIDs(string) ([]uint32, error) { return nil, nil }
 
-func (printFS) ReadReaderViews(string) (map[string][]string, error) { return nil, nil }
+func (printFS) ReadReaderViews(fsops.ViewLayout) (map[string][]string, error) { return nil, nil }
 
-func (p printFS) EnsureReaderViews(groupsBase, team string, teamGID uint32, readers []fsops.ReaderGroup) error {
-	src := filepath.Join(groupsBase, team)
+func (p printFS) EnsureReaderViews(l fsops.ViewLayout, team string, teamGID uint32, readers []fsops.ReaderGroup) error {
+	src := filepath.Join(l.Groups, team)
 	fmt.Fprintf(p.w, "    setfacl -b -k %s   # drop any reader ACL an older version left\n", src)
 	if len(readers) == 0 {
 		fmt.Fprintf(p.w, "    umount every read-only view of %s\n", src)
 		return nil
 	}
 	for _, r := range readers {
-		point := fsops.ViewPath(groupsBase, team, r.Name)
-		fmt.Fprintf(p.w, "    mount --rbind -o ro,X-mount.idmap='<%d→%d>' %s %s\n", teamGID, r.GID, src, point)
+		for _, point := range l.Points(team, r.Name) {
+			fmt.Fprintf(p.w, "    mount --rbind -o ro,X-mount.idmap='<%d→%d>' %s %s\n", teamGID, r.GID, src, point)
+		}
 	}
 	return nil
 }
@@ -284,6 +285,7 @@ func dryDeps(c *config.Config, w io.Writer) (executor.Deps, error) {
 		Quota:      qc,
 		HomeBase:   c.Paths.Home,
 		GroupsBase: c.Paths.Groups,
+		Views:      c.ViewLayout(),
 	}, nil
 }
 
@@ -302,6 +304,7 @@ func collectActual(ctx context.Context, c *config.Config, r run.Runner, cls *idr
 	return executor.Collect(ctx, p, s, cls, executor.CollectOpts{
 		HomeBase:    c.Paths.Home,
 		GroupsBase:  c.Paths.Groups,
+		Views:       c.ViewLayout(),
 		FS:          fsops.OS{},
 		SmbOptional: smbOptional,
 		Warn:        warn,

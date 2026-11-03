@@ -47,7 +47,7 @@ func NewCmdRoster() *xli.Command {
 
 			enc := json.NewEncoder(cmd)
 			enc.SetIndent("", "  ")
-			return enc.Encode(newRosterView(ro, c.Paths.Home, c.Paths.Groups))
+			return enc.Encode(newRosterView(ro, c.Paths.Home, c.ViewLayout()))
 		}),
 	}
 }
@@ -76,6 +76,8 @@ type rosterView struct {
 type pathsView struct {
 	Home   string `json:"home"`
 	Groups string `json:"groups"`
+	// Views is the view namespace when one is configured (usersync#13).
+	Views string `json:"views,omitempty"`
 }
 
 // viewEntry is one read-only view a group holds: the team it shows, and where
@@ -117,14 +119,14 @@ type userView struct {
 	Quota    *uint64 `json:"quota,omitempty"` // byte limit (resolved from profile); null = unlimited
 }
 
-func newRosterView(ro *roster.Roster, homeBase, groupsBase string) rosterView {
+func newRosterView(ro *roster.Roster, homeBase string, l fsops.ViewLayout) rosterView {
 	v := rosterView{
 		Schema: rosterSchema,
-		Paths:  pathsView{Home: homeBase, Groups: groupsBase},
+		Paths:  pathsView{Home: homeBase, Groups: l.Groups, Views: l.Views},
 		Groups: []groupView{},
 		Users:  []userView{},
 	}
-	views := viewsByReader(ro, groupsBase)
+	views := viewsByReader(ro, l)
 	for _, g := range ro.Groups {
 		v.Groups = append(v.Groups, groupView{
 			Name:        g.Name,
@@ -160,12 +162,14 @@ func newRosterView(ro *roster.Roster, homeBase, groupsBase string) rosterView {
 
 // viewsByReader inverts readers: for each reader group, the teams it may read
 // and where each view is mounted, sorted by team. It is computed from the
-// declaration with the same ViewPath apply mounts at, so the two cannot disagree.
-func viewsByReader(ro *roster.Roster, groupsBase string) map[string][]viewEntry {
+// declaration with the same layout apply mounts by, so the two cannot disagree.
+// The path is the layout's primary one: the view namespace once configured, so
+// a consumer that opens it as given moves with it.
+func viewsByReader(ro *roster.Roster, l fsops.ViewLayout) map[string][]viewEntry {
 	out := map[string][]viewEntry{}
 	for _, t := range ro.Groups {
 		for _, r := range t.Readers {
-			out[r] = append(out[r], viewEntry{Team: t.Name, Path: fsops.ViewPath(groupsBase, t.Name, r)})
+			out[r] = append(out[r], viewEntry{Team: t.Name, Path: l.Path(t.Name, r)})
 		}
 	}
 	for r := range out {

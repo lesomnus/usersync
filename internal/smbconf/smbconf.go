@@ -32,8 +32,9 @@ func oneLine(s string) string {
 // Render builds the managed block (markers included) from the roster groups. It
 // emits a single [homes] section plus one [<team>] section per group, sorted by
 // name for deterministic output. homeBase and groupsBase are the home and group
-// folder roots.
-func Render(groups []roster.Group, homeBase, groupsBase string) string {
+// folder roots. With viewsBase set it also emits a read-only [<reader>.read] per
+// group that holds views, serving <viewsBase>/<reader> (usersync#13).
+func Render(groups []roster.Group, homeBase, groupsBase, viewsBase string) string {
 	gs := append([]roster.Group(nil), groups...)
 	sort.Slice(gs, func(i, j int) bool { return gs[i].Name < gs[j].Name })
 
@@ -137,8 +138,43 @@ func Render(groups []roster.Group, homeBase, groupsBase string) string {
 		}
 	}
 
+	if viewsBase != "" {
+		renderViewShares(&b, gs, viewsBase)
+	}
 	b.WriteString(EndMarker + "\n")
 	return b.String()
+}
+
+// ReadShareSuffix names the read-only share of a reader group's views:
+// [<reader>.read]. Group names ending in it are refused at roster load, so the
+// two can never collide.
+const ReadShareSuffix = roster.ReadShareSuffix
+
+// renderViewShares emits [<reader>.read] for every group that is somebody's
+// reader. The share serves the reader's directory in the view namespace, which
+// holds nothing but its views — so it is read-only at the share as well as at
+// every mount beneath it, and only the reader group connects.
+func renderViewShares(b *strings.Builder, gs []roster.Group, viewsBase string) {
+	reads := map[string][]string{}
+	for _, t := range gs {
+		for _, r := range t.Readers {
+			reads[r] = append(reads[r], t.Name)
+		}
+	}
+	for _, g := range gs { // gs is sorted, so the shares are too
+		teams, ok := reads[g.Name]
+		if !ok {
+			continue
+		}
+		name := oneLine(g.Name)
+		fmt.Fprintf(b, "\n[%s%s]\n", name, ReadShareSuffix)
+		fmt.Fprintf(b, "   comment = %s: read-only views of %s\n", name, oneLine(strings.Join(teams, ", ")))
+		fmt.Fprintf(b, "   path = %s\n", oneLine(filepath.Join(viewsBase, name)))
+		b.WriteString("   browseable = yes\n")
+		b.WriteString("   read only = yes\n")
+		fmt.Fprintf(b, "   valid users = @%s\n", name)
+		b.WriteString("   guest ok = no\n")
+	}
 }
 
 // Splice returns existing with the managed block replaced by block. If existing
@@ -187,7 +223,7 @@ func Reload(ctx context.Context, r run.Runner) error {
 // backs the original up to confPath+".bak", writes the new content, and (if
 // reload) reloads smbd — restoring the original if the reload fails. It reports
 // whether the file changed. A no-op (block already current) makes no writes.
-func Apply(ctx context.Context, confPath, homeBase, groupsBase string, groups []roster.Group, r run.Runner, reload bool) (changed bool, err error) {
+func Apply(ctx context.Context, confPath, homeBase, groupsBase, viewsBase string, groups []roster.Group, r run.Runner, reload bool) (changed bool, err error) {
 	orig, err := os.ReadFile(confPath)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", confPath, err)
@@ -196,7 +232,7 @@ func Apply(ctx context.Context, confPath, homeBase, groupsBase string, groups []
 	if fi, err := os.Stat(confPath); err == nil {
 		mode = fi.Mode().Perm()
 	}
-	updated := Splice(string(orig), Render(groups, homeBase, groupsBase))
+	updated := Splice(string(orig), Render(groups, homeBase, groupsBase, viewsBase))
 	if updated == string(orig) {
 		return false, nil
 	}

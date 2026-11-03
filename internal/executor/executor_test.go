@@ -103,14 +103,14 @@ func (f fakeFS) EnsureHomeDir(path string, uid, gid uint32) error {
 func (f fakeFS) Stat(string) (bool, uint32, uint32, uint32) { return true, 0o700, 0, 0 }
 func (f fakeFS) ReadReaderGIDs(string) ([]uint32, error)    { return nil, nil }
 
-func (f fakeFS) ReadReaderViews(string) (map[string][]string, error) { return nil, nil }
+func (f fakeFS) ReadReaderViews(fsops.ViewLayout) (map[string][]string, error) { return nil, nil }
 
-func (f fakeFS) EnsureReaderViews(groupsBase, team string, teamGID uint32, readers []fsops.ReaderGroup) error {
+func (f fakeFS) EnsureReaderViews(l fsops.ViewLayout, team string, teamGID uint32, readers []fsops.ReaderGroup) error {
 	names := make([]string, len(readers))
 	for i, r := range readers {
 		names[i] = fmt.Sprintf("%s:%d", r.Name, r.GID)
 	}
-	*f.log = append(*f.log, fmt.Sprintf("ReaderViews(%s,%s,%d,%v)", groupsBase, team, teamGID, names))
+	*f.log = append(*f.log, fmt.Sprintf("ReaderViews(%s,%s,%d,%v)", l.Groups, team, teamGID, names))
 	return nil
 }
 

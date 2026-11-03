@@ -128,6 +128,7 @@ func runApplyOnce(ctx context.Context, cmd *xli.Command, c *config.Config) error
 	actual, err := executor.Collect(ctx, p, s, cls, executor.CollectOpts{
 		HomeBase:   c.Paths.Home,
 		GroupsBase: c.Paths.Groups,
+		Views:      c.ViewLayout(),
 		FS:         fsops.OS{},
 		Quota:      qc,
 		Warn:       errW(cmd),
@@ -166,6 +167,7 @@ func runApplyOnce(ctx context.Context, cmd *xli.Command, c *config.Config) error
 		Quota:      qc,
 		HomeBase:   c.Paths.Home,
 		GroupsBase: c.Paths.Groups,
+		Views:      c.ViewLayout(),
 		PosixOnly:  nssOnly,
 	}
 	results, applyErr := d.Apply(ctx, actions)

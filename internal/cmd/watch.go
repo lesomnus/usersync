@@ -93,7 +93,7 @@ func NewCmdWatch() *xli.Command {
 						fmt.Fprintf(errW(cmd), "watch: shares not updated: %v\n", err)
 						return
 					}
-					if _, err := smbconf.Apply(ctx, smbConfPath, c.Paths.Home, c.Paths.Groups, ro.Groups, run.Exec{}, true); err != nil {
+					if _, err := smbconf.Apply(ctx, smbConfPath, c.Paths.Home, c.Paths.Groups, c.Paths.Views, ro.Groups, run.Exec{}, true); err != nil {
 						fmt.Fprintf(errW(cmd), "watch: smb.conf/reload failed: %v\n", err)
 					}
 				}

@@ -101,9 +101,9 @@ func pickGroups(ro *roster.Roster, names []string) ([]roster.Group, error) {
 
 	involved := map[string]bool{}
 	for _, g := range ro.Groups {
-		if len(g.Readers) > 0 {
+		if rs := ro.GroupReaders(g); len(rs) > 0 {
 			involved[g.Name] = true
-			for _, r := range g.Readers {
+			for _, r := range rs {
 				involved[r] = true
 			}
 		}
@@ -162,7 +162,7 @@ func explainGroup(fs fsops.OS, ro *roster.Roster, l fsops.ViewLayout, g roster.G
 	gidOf := map[string]uint32{}
 	for _, other := range ro.Groups {
 		gidOf[other.Name] = other.GID
-		for _, r := range other.Readers {
+		for _, r := range ro.GroupReaders(other) {
 			if r == g.Name {
 				e.Reads = append(e.Reads, other.Name)
 			}
@@ -174,7 +174,7 @@ func explainGroup(fs fsops.OS, ro *roster.Roster, l fsops.ViewLayout, g roster.G
 	for _, r := range views[g.Name] {
 		mounted[r] = true
 	}
-	for _, r := range g.Readers {
+	for _, r := range ro.GroupReaders(g) {
 		e.Readers = append(e.Readers, readerExplain{
 			Name:    r,
 			GID:     gidOf[r],

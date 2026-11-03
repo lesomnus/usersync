@@ -5,6 +5,7 @@ package roster
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -322,6 +323,56 @@ type Group struct {
 	// (it has a gid and a folder of its own), so its folder doubles as a
 	// company-wide shared space, or is simply left unused.
 	All All `yaml:"all,omitempty"`
+
+	// ReadAll makes this group a reader of every other group, including the ones
+	// declared later, without naming it in each one's `readers` (usersync#13). It
+	// is how "may read everything" is said once: an auditor, a backup operator.
+	// The grant is the same read-only view as a declared reader's.
+	//
+	// It skips groups whose folders are open to the world already (`anonymous`),
+	// groups that opt out with ReadAllExempt, and itself. Naming a read_all group
+	// in a `readers` list it would reach anyway is refused as redundant; on an
+	// exempt group it is how that group is still shared with it.
+	//
+	// It needs the view namespace (`paths.views`, with `legacy_views: false`):
+	// at the legacy location a reader group's folder holds its views, and an
+	// id-mapped mount cannot be id-mapped again, so reading a reader group would
+	// fail. The command that loads the roster refuses it otherwise.
+	ReadAll bool `yaml:"read_all,omitempty"`
+
+	// ReadAllExempt keeps read_all groups out of this group's folder, for a folder
+	// that must not be read by everything that reads everything: a test fixture
+	// whose access is the thing under test, say.
+	ReadAllExempt bool `yaml:"read_all_exempt,omitempty"`
+}
+
+// readAllReaches reports whether read_all group r reads g without being named.
+func readAllReaches(r, g Group) bool {
+	return r.ReadAll && r.Name != g.Name && g.Anonymous == AnonNone && !g.ReadAllExempt
+}
+
+// GroupReaders returns the groups that may read g's folder: its declared
+// `readers`, then every read_all group that reaches it, in roster order. It is
+// the ONE place read_all is resolved, as GroupMembership is for `all`, so the
+// mounts, the shares and the roster export cannot disagree on who reads what.
+func (ro *Roster) GroupReaders(g Group) []string {
+	out := append([]string{}, g.Readers...)
+	for _, r := range ro.Groups {
+		if readAllReaches(r, g) && !slices.Contains(out, r.Name) {
+			out = append(out, r.Name)
+		}
+	}
+	return out
+}
+
+// HasReadAll reports whether any group is read_all.
+func (ro *Roster) HasReadAll() bool {
+	for _, g := range ro.Groups {
+		if g.ReadAll {
+			return true
+		}
+	}
+	return false
 }
 
 // GroupMembership returns the accounts a group contains: its explicit `members`

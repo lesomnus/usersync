@@ -2,6 +2,7 @@ package roster
 
 import (
 	"bytes"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -460,5 +461,84 @@ func TestReadShareSuffixIsReserved(t *testing.T) {
 	ro = &Roster{Groups: []Group{{Name: "sim.reader", GID: 7001}}}
 	if _, err := ro.Validate(testClassifier(), PolicyError); err != nil {
 		t.Errorf("sim.reader only contains the suffix, it does not end in it: %v", err)
+	}
+}
+
+// read_all is resolved in one place: declared readers first, then every
+// read_all group that reaches the folder — not itself, not a world-open folder,
+// not an exempt one. A group declared after the read_all group is reached too.
+func TestGroupReadersResolvesReadAll(t *testing.T) {
+	ro := &Roster{Groups: []Group{
+		{Name: "audit", GID: 7090, ReadAll: true},
+		{Name: "sim", GID: 7001, Readers: []string{"sim-ro"}},
+		{Name: "sim-ro", GID: 7011},
+		{Name: "public", GID: 7002, Anonymous: AnonRead},
+		{Name: "fixture", GID: 7003, ReadAllExempt: true},
+		{Name: "backup", GID: 7091, ReadAll: true},
+		{Name: "later", GID: 7004},
+	}}
+	if _, err := ro.Validate(testClassifier(), PolicyError); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		group string
+		want  []string
+	}{
+		{"sim", []string{"sim-ro", "audit", "backup"}},
+		{"sim-ro", []string{"audit", "backup"}}, // a reader group is read too
+		{"audit", []string{"backup"}},           // not itself; another read_all group reads it
+		{"public", []string{}},
+		{"fixture", []string{}},
+		{"later", []string{"audit", "backup"}},
+	} {
+		var g Group
+		for _, x := range ro.Groups {
+			if x.Name == tc.group {
+				g = x
+			}
+		}
+		if got := ro.GroupReaders(g); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: readers = %v; want %v", tc.group, got, tc.want)
+		}
+	}
+}
+
+func TestReadAllValidation(t *testing.T) {
+	for name, tc := range map[string]struct {
+		groups []Group
+		ok     bool
+	}{
+		"naming a read_all group it reaches anyway is redundant": {groups: []Group{
+			{Name: "audit", GID: 7090, ReadAll: true},
+			{Name: "sim", GID: 7001, Readers: []string{"audit"}},
+		}},
+		"an exempt group may still name it": {ok: true, groups: []Group{
+			{Name: "audit", GID: 7090, ReadAll: true},
+			{Name: "fixture", GID: 7001, ReadAllExempt: true, Readers: []string{"audit"}},
+		}},
+		"read_all and read_all_exempt on one group": {groups: []Group{
+			{Name: "audit", GID: 7090, ReadAll: true, ReadAllExempt: true},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ro := &Roster{Groups: tc.groups}
+			_, err := ro.Validate(testClassifier(), PolicyError)
+			if tc.ok && err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+}
+
+func TestReadAllLoads(t *testing.T) {
+	ro, err := Load(strings.NewReader("groups:\n  - name: audit\n    gid: 7090\n    read_all: true\n  - name: fixture\n    gid: 7001\n    read_all_exempt: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ro.Groups[0].ReadAll || !ro.Groups[1].ReadAllExempt || !ro.HasReadAll() {
+		t.Fatalf("read_all / read_all_exempt not decoded: %+v", ro.Groups)
 	}
 }

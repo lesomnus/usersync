@@ -16,7 +16,7 @@ func groups() []roster.Group {
 }
 
 func TestRender(t *testing.T) {
-	out := Render(groups(), "/research/home", "/research/groups")
+	out := Render(groups(), "/research/home", "/research/groups", "")
 	for _, want := range []string{
 		BeginMarker, EndMarker,
 		"[homes]", "valid users = %S",
@@ -48,7 +48,7 @@ func TestAnonymousShares(t *testing.T) {
 		{Name: "pub-w", GID: 10002, Anonymous: roster.AnonWrite},
 		{Name: "team", GID: 10003}, // AnonNone control
 	}
-	secs := sections(Render(gs, "/research/home", "/research/groups"))
+	secs := sections(Render(gs, "/research/home", "/research/groups", ""))
 
 	// Read-only public: world may read (0664/2775), not write.
 	r := secs["pub-r"]
@@ -106,7 +106,7 @@ func TestRenderReadersChangeNoShare(t *testing.T) {
 		{Name: "sim-readers", GID: 10002},
 		{Name: "aux-readers", GID: 10003},
 	}
-	withReaders := sections(Render(gs, "/h", "/g"))
+	withReaders := sections(Render(gs, "/h", "/g", ""))
 
 	sim := withReaders["sim"]
 	if got := sim["valid users"]; got != "@sim" {
@@ -131,7 +131,7 @@ func TestRenderReadersChangeNoShare(t *testing.T) {
 		{Name: "sim-readers", GID: 10002},
 		{Name: "aux-readers", GID: 10003},
 	}
-	if got, want := Render(gs, "/h", "/g"), Render(plain, "/h", "/g"); got != want {
+	if got, want := Render(gs, "/h", "/g", ""), Render(plain, "/h", "/g", ""); got != want {
 		t.Errorf("declaring readers changed smb.conf:\n%s\nwant\n%s", got, want)
 	}
 }
@@ -202,7 +202,7 @@ func octal(t *testing.T, sec map[string]string, key string) uint32 {
 // The generated directives must land every new object on one known mode, for
 // every client, starting from the bases smbd actually uses.
 func TestGeneratedModesAreExact(t *testing.T) {
-	secs := sections(Render(groups(), "/research/home", "/research/groups"))
+	secs := sections(Render(groups(), "/research/home", "/research/groups", ""))
 
 	for _, tt := range []struct {
 		section              string
@@ -259,7 +259,7 @@ func TestGeneratedModesAreExact(t *testing.T) {
 // un-setgid parent: mask alone yields 0770, with the force it is 2770
 // (scripts/verify-samba-modes.sh).
 func TestForceDirectoryModeRestoresSetgid(t *testing.T) {
-	team := sections(Render(groups(), "/research/home", "/research/groups"))["team-a"]
+	team := sections(Render(groups(), "/research/home", "/research/groups", ""))["team-a"]
 	mask := octal(t, team, "directory mask")
 	force := octalOr(t, team, "force directory mode", 0)
 
@@ -279,7 +279,7 @@ func TestForceDirectoryModeRestoresSetgid(t *testing.T) {
 // maps read-only onto the permission bits. A directive that does nothing is a
 // directive that misleads whoever reads the config next.
 func TestNoForceCreateMode(t *testing.T) {
-	for name, sec := range sections(Render(groups(), "/research/home", "/research/groups")) {
+	for name, sec := range sections(Render(groups(), "/research/home", "/research/groups", "")) {
 		if v, ok := sec["force create mode"]; ok {
 			t.Errorf("[%s] sets force create mode = %s; the mask alone already pins the file mode", name, v)
 		}
@@ -288,7 +288,7 @@ func TestNoForceCreateMode(t *testing.T) {
 
 func TestSpliceAppendsWhenAbsent(t *testing.T) {
 	existing := "[global]\n   workgroup = WORKGROUP\n"
-	block := Render(groups(), "/h", "/g")
+	block := Render(groups(), "/h", "/g", "")
 	out := Splice(existing, block)
 	if !strings.HasPrefix(out, existing) {
 		t.Error("existing content must be preserved at the top")
@@ -300,8 +300,8 @@ func TestSpliceAppendsWhenAbsent(t *testing.T) {
 
 func TestSpliceReplacesAndIsIdempotent(t *testing.T) {
 	existing := "[global]\n   workgroup = WORKGROUP\n"
-	first := Splice(existing, Render(groups()[:1], "/h", "/g")) // only team-b
-	second := Splice(first, Render(groups(), "/h", "/g"))       // now team-a + team-b
+	first := Splice(existing, Render(groups()[:1], "/h", "/g", "")) // only team-b
+	second := Splice(first, Render(groups(), "/h", "/g", ""))       // now team-a + team-b
 
 	// The [global] section survives, and there is exactly one managed block.
 	if strings.Count(second, BeginMarker) != 1 || strings.Count(second, EndMarker) != 1 {
@@ -314,7 +314,7 @@ func TestSpliceReplacesAndIsIdempotent(t *testing.T) {
 		t.Error("replacement must reflect the new groups")
 	}
 	// Idempotent: splicing the same block again changes nothing.
-	third := Splice(second, Render(groups(), "/h", "/g"))
+	third := Splice(second, Render(groups(), "/h", "/g", ""))
 	if third != second {
 		t.Error("splicing the same block must be idempotent")
 	}
@@ -322,8 +322,8 @@ func TestSpliceReplacesAndIsIdempotent(t *testing.T) {
 
 func TestSpliceRemovesStaleShare(t *testing.T) {
 	// A group dropped from the roster must disappear from the managed block.
-	with := Splice("[global]\n", Render(groups(), "/h", "/g"))
-	without := Splice(with, Render(groups()[1:], "/h", "/g")) // only team-a
+	with := Splice("[global]\n", Render(groups(), "/h", "/g", ""))
+	without := Splice(with, Render(groups()[1:], "/h", "/g", "")) // only team-a
 	if strings.Contains(without, "[team-b]") {
 		t.Error("dropped group's share must be removed on re-splice")
 	}
@@ -336,7 +336,7 @@ func TestRenderStripsNewlines(t *testing.T) {
 	// Defense-in-depth: even a newline-bearing name/description must not create a
 	// new section/directive in the rendered block.
 	g := []roster.Group{{Name: "team-a", GID: 10001, Description: "x\n[public]\n   path = /\n   guest ok = yes"}}
-	out := Render(g, "/research/home", "/research/groups")
+	out := Render(g, "/research/home", "/research/groups", "")
 	// No injected section header or directive may appear at the start of a line;
 	// the payload must be collapsed onto the single `comment =` line.
 	for _, ln := range strings.Split(out, "\n") {
@@ -344,5 +344,34 @@ func TestRenderStripsNewlines(t *testing.T) {
 		if strings.HasPrefix(s, "[public]") || strings.HasPrefix(s, "guest ok") {
 			t.Fatalf("newline injection leaked a directive onto its own line:\n%s", out)
 		}
+	}
+}
+
+// With a view namespace, every group that holds views gets [<reader>.read] over
+// its directory there: read-only at the share, and only the reader group in.
+// Groups that read nothing get none, and without a namespace nothing changes.
+func TestRenderReadShares(t *testing.T) {
+	gs := []roster.Group{
+		{Name: "sim", GID: 10017, Readers: []string{"sim-ro"}},
+		{Name: "sim-ro", GID: 10020},
+		{Name: "rl", GID: 10014},
+	}
+	secs := sections(Render(gs, "/h", "/g", "/v"))
+	read, ok := secs["sim-ro.read"]
+	if !ok {
+		t.Fatalf("no [sim-ro.read]; sections: %v", secs)
+	}
+	for k, want := range map[string]string{"path": "/v/sim-ro", "read only": "yes", "valid users": "@sim-ro", "guest ok": "no"} {
+		if read[k] != want {
+			t.Errorf("[sim-ro.read] %s = %q; want %q", k, read[k], want)
+		}
+	}
+	for _, none := range []string{"sim.read", "rl.read"} {
+		if _, ok := secs[none]; ok {
+			t.Errorf("[%s] rendered for a group that reads nothing", none)
+		}
+	}
+	if got, want := Render(gs, "/h", "/g", ""), Render(gs, "/h", "/g", ""); got != want || strings.Contains(got, ".read]") {
+		t.Errorf("without a view namespace no read share may appear")
 	}
 }

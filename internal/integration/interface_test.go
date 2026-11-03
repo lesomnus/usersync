@@ -1,8 +1,10 @@
 package integration
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -181,5 +183,66 @@ func TestInterfaceRosterOutput(t *testing.T) {
 	// parses stdout whole, so one stray line there is a parse error.
 	if r.stdout != wantRoster {
 		t.Errorf("roster stdout differs from the documented interface (docs/interface.md).\n--- got\n%s\n--- want\n%s", r.stdout, wantRoster)
+	}
+}
+
+// With paths.views set, the view a consumer is sent to is in the namespace, and
+// `shares` serves it as [<reader>.read]. The legacy views stay mounted meanwhile
+// (legacy_views defaults to true), but they are no longer what anybody is told.
+func TestInterfaceViewsMoveWithPathsViews(t *testing.T) {
+	bin, dir := binary(t), interfaceFixture(t)
+	cfg := `paths:
+  home: /srv/data/homes
+  groups: /srv/data/teams
+  views: /srv/data/views
+mode: manage
+provider: shadow-utils
+`
+	if err := os.WriteFile(filepath.Join(dir, "usersync.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runCLI(t, bin, dir, "roster")
+	if r.code != 0 {
+		t.Fatalf("roster exited %d\nstderr: %s", r.code, r.stderr)
+	}
+	var out struct {
+		Paths struct {
+			Views string `json:"views"`
+		} `json:"paths"`
+		Groups []struct {
+			Name  string `json:"name"`
+			Views []struct {
+				Team, Path string
+			} `json:"views"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &out); err != nil {
+		t.Fatalf("roster stdout is not JSON: %v\n%s", err, r.stdout)
+	}
+	if out.Paths.Views != "/srv/data/views" {
+		t.Errorf("paths.views = %q", out.Paths.Views)
+	}
+	var got string
+	for _, g := range out.Groups {
+		if g.Name == "team-a-ro" && len(g.Views) == 1 {
+			got = g.Views[0].Path
+		}
+	}
+	if got != "/srv/data/views/team-a-ro/team-a" {
+		t.Errorf("team-a-ro's view path = %q; want it in the view namespace", got)
+	}
+
+	s := runCLI(t, bin, dir, "shares")
+	if s.code != 0 {
+		t.Fatalf("shares exited %d\nstderr: %s", s.code, s.stderr)
+	}
+	for _, want := range []string{"[team-a-ro.read]", "path = /srv/data/views/team-a-ro", "read only = yes", "valid users = @team-a-ro"} {
+		if !strings.Contains(s.stdout, want) {
+			t.Errorf("shares output lacks %q:\n%s", want, s.stdout)
+		}
+	}
+	if strings.Contains(s.stdout, "[team-a.read]") {
+		t.Errorf("[team-a.read] rendered, but team-a reads nothing")
 	}
 }

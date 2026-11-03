@@ -60,6 +60,13 @@ func TestValidateRejects(t *testing.T) {
 		"bad on_out_of_scope": func(c *Config) { c.OnOutOfScope = "nope" },
 		"unknown provider":    func(c *Config) { c.Provider = "adduser" },
 		"unknown mode":        func(c *Config) { c.Mode = "readonly" },
+		"relative views":      func(c *Config) { c.Paths.Views = "srv/views" },
+		// The view namespace exists so that nothing else lives in it and nothing
+		// of it lives in a folder people write in. Nesting brings that back.
+		"views inside groups":            func(c *Config) { c.Paths.Views = c.Paths.Groups + "/views" },
+		"views containing groups":        func(c *Config) { c.Paths.Views = "/" },
+		"views equal to home":            func(c *Config) { c.Paths.Views = c.Paths.Home },
+		"legacy_views off with no views": func(c *Config) { f := false; c.LegacyViews = &f },
 	}
 	for name, mutate := range cases {
 		c := goodConfig()
@@ -107,5 +114,26 @@ func TestReadFromFileRejectsUnknownKey(t *testing.T) {
 				t.Errorf("Mode = %q, want audit", c.Mode)
 			}
 		})
+	}
+}
+
+// legacy_views defaults to on, so setting paths.views alone starts a transition
+// rather than ending one: views go up in the namespace while the old ones stay.
+func TestViewLayoutDefaultsToTheTransition(t *testing.T) {
+	c := goodConfig()
+	if l := c.ViewLayout(); l.Views != "" || !l.Legacy {
+		t.Fatalf("no paths.views: layout = %+v; want legacy only", l)
+	}
+	c.Paths.Views = "/srv/data/views"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("paths.views outside groups and home: %v", err)
+	}
+	if l := c.ViewLayout(); l.Views != "/srv/data/views" || !l.Legacy {
+		t.Fatalf("paths.views set: layout = %+v; want views + legacy", l)
+	}
+	off := false
+	c.LegacyViews = &off
+	if l := c.ViewLayout(); l.Legacy {
+		t.Fatalf("legacy_views: false: layout = %+v; want views only", l)
 	}
 }

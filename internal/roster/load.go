@@ -46,6 +46,11 @@ var reservedSmbSection = map[string]bool{"global": true, "homes": true, "printer
 
 func validName(s string) bool { return reName.MatchString(s) }
 
+// ReadShareSuffix is reserved at the end of a group name: `shares` names a
+// reader group's read-only share [<reader>.read] (usersync#13), and a group
+// called that would be a second section of the same name.
+const ReadShareSuffix = ".read"
+
 // ValidName reports whether s is a usersync-manageable account/group name (safe
 // as a CLI arg and an smb.conf section). Exported so callers that take a name
 // from argv or a system scan can guard it before it reaches an exec argument.
@@ -139,6 +144,9 @@ func (ro *Roster) Validate(cls *idrange.Classifier, policy Policy) ([]Skipped, e
 		}
 		if reservedSmbSection[g.Name] {
 			errs = append(errs, fmt.Errorf("group name %q is a reserved Samba section name", g.Name))
+		}
+		if strings.HasSuffix(g.Name, ReadShareSuffix) {
+			errs = append(errs, fmt.Errorf("group name %q ends in %q, which names a reader group's read-only share ([<reader>%s]) — pick another name", g.Name, ReadShareSuffix, ReadShareSuffix))
 		}
 		if hasControlOrNewline(g.Description) {
 			errs = append(errs, fmt.Errorf("group %q description must be a single line (no control/newline chars)", g.Name))

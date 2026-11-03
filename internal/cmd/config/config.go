@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/lesomnus/usersync/internal/fsops"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,10 @@ type Range struct {
 type PathsConfig struct {
 	Home   string `yaml:"home"`
 	Groups string `yaml:"groups"`
+	// Views is the namespace read-only views are mounted in, <views>/<reader>/
+	// <team>, and from which `shares` serves [<reader>.read]. Empty keeps views
+	// only at the legacy location inside the reader's own folder (usersync#13).
+	Views string `yaml:"views,omitempty"`
 }
 
 // ManageConfig is the id window usersync manages.
@@ -59,9 +64,14 @@ type QuotaConfig struct {
 type Config struct {
 	path string
 
-	Paths   PathsConfig   `yaml:"paths"`
-	Manage  ManageConfig  `yaml:"manage"`
-	Protect ProtectConfig `yaml:"protect"`
+	Paths PathsConfig `yaml:"paths"`
+	// LegacyViews keeps views at the legacy location <groups>/<reader>/<team> as
+	// well as under paths.views, for the time it takes people and programs to
+	// move. Absent means true. Setting it false takes the legacy views down; it
+	// needs paths.views.
+	LegacyViews *bool         `yaml:"legacy_views,omitempty"`
+	Manage      ManageConfig  `yaml:"manage"`
+	Protect     ProtectConfig `yaml:"protect"`
 
 	// Mode is who owns the accounts.
 	//
@@ -208,6 +218,27 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("%s must not contain control/newline characters", p.name)
 		}
 	}
+	if c.Paths.Views != "" {
+		v := filepath.Clean(c.Paths.Views)
+		if !filepath.IsAbs(v) {
+			return fmt.Errorf("paths.views must be an absolute path, got %q", c.Paths.Views)
+		}
+		if i := strings.IndexFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
+			return fmt.Errorf("paths.views must not contain control/newline characters")
+		}
+		// The point of the view namespace is that nothing else lives in it, and
+		// that nothing of it lives in a folder people write in. Either nesting
+		// would bring back the ambiguity it exists to remove.
+		for _, p := range []struct{ name, val string }{{"paths.home", c.Paths.Home}, {"paths.groups", c.Paths.Groups}} {
+			other := filepath.Clean(p.val)
+			if within(v, other) || within(other, v) {
+				return fmt.Errorf("paths.views (%s) must be outside %s (%s), and not contain it", v, p.name, other)
+			}
+		}
+	}
+	if c.LegacyViews != nil && !*c.LegacyViews && c.Paths.Views == "" {
+		return fmt.Errorf("legacy_views: false needs paths.views — without it the legacy location is the only one")
+	}
 	switch c.Mode {
 	case "", "manage", "audit":
 	default:
@@ -245,4 +276,18 @@ func (c *Config) Policy() (roster.Policy, error) {
 	default:
 		return roster.PolicyError, fmt.Errorf("invalid on_out_of_scope %q (want error|skip)", c.OnOutOfScope)
 	}
+}
+
+// ViewLayout is where reader views are kept, from paths.views and legacy_views.
+func (c *Config) ViewLayout() fsops.ViewLayout {
+	legacy := c.LegacyViews == nil || *c.LegacyViews || c.Paths.Views == ""
+	return fsops.ViewLayout{Groups: c.Paths.Groups, Views: c.Paths.Views, Legacy: legacy}
+}
+
+// within reports whether path is dir or lies beneath it. Both are cleaned and
+// absolute; filepath.Rel rather than a prefix test, so "/" contains everything
+// and "/srv/data2" is not inside "/srv/data".
+func within(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

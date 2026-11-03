@@ -252,11 +252,11 @@ func TestEnsureReaderViewsLeavesNonViewMountsAlone(t *testing.T) {
 	fs := OS{}
 	// rl is not a declared reader of perception. Before, this was taken for a
 	// stale view and unmounted.
-	if err := fs.EnsureReaderViews(base, "perception", 10001, nil); err != nil {
+	if err := fs.EnsureReaderViews(ViewLayout{Groups: base, Legacy: true}, "perception", 10001, nil); err != nil {
 		t.Fatalf("EnsureReaderViews touched a mount that is not a view: %v", err)
 	}
 	// rl is declared. The view's place is taken by something else: refuse.
-	err := fs.EnsureReaderViews(base, "perception", 10001, []ReaderGroup{{Name: "rl", GID: 10014}})
+	err := fs.EnsureReaderViews(ViewLayout{Groups: base, Legacy: true}, "perception", 10001, []ReaderGroup{{Name: "rl", GID: 10014}})
 	if err == nil || !strings.Contains(err.Error(), "not a read-only id-mapped view") {
 		t.Fatalf("EnsureReaderViews over a non-view mount = %v; want a refusal", err)
 	}
@@ -283,7 +283,7 @@ func TestEnsureReaderViewsClearsTheLegacyFolderACL(t *testing.T) {
 	if gids, err := fs.ReadReaderGIDs(team); err != nil || len(gids) != 1 {
 		t.Fatalf("setup: readers = %v, %v; want one entry", gids, err)
 	}
-	if err := fs.EnsureReaderViews(base, "perception", 10001, nil); err != nil {
+	if err := fs.EnsureReaderViews(ViewLayout{Groups: base, Legacy: true}, "perception", 10001, nil); err != nil {
 		t.Fatalf("EnsureReaderViews: %v", err)
 	}
 	if gids, err := fs.ReadReaderGIDs(team); err != nil || len(gids) != 0 {
@@ -369,4 +369,84 @@ func checkCovers(t *testing.T, exts []extent, except uint64) {
 		}
 	}
 	gap(next, maxID)
+}
+
+func TestViewLayoutLocations(t *testing.T) {
+	legacyOnly := ViewLayout{Groups: "/g", Legacy: true}
+	both := ViewLayout{Groups: "/g", Views: "/v", Legacy: true}
+	moved := ViewLayout{Groups: "/g", Views: "/v"}
+
+	if got := legacyOnly.Path("sim", "sim-ro"); got != "/g/sim-ro/sim" {
+		t.Errorf("legacy-only Path = %q", got)
+	}
+	// Once there is a view namespace, that is where a consumer is sent — also
+	// during the transition, so it moves before the legacy views come down.
+	if got := both.Path("sim", "sim-ro"); got != "/v/sim-ro/sim" {
+		t.Errorf("transition Path = %q", got)
+	}
+	if got := both.Points("sim", "sim-ro"); !reflect.DeepEqual(got, []string{"/v/sim-ro/sim", "/g/sim-ro/sim"}) {
+		t.Errorf("transition Points = %v", got)
+	}
+	if got := moved.Points("sim", "sim-ro"); !reflect.DeepEqual(got, []string{"/v/sim-ro/sim"}) {
+		t.Errorf("moved Points = %v", got)
+	}
+	if _, inactive := moved.bases(); !reflect.DeepEqual(inactive, []string{"/g"}) {
+		t.Errorf("moved inactive = %v; the legacy location must be emptied", inactive)
+	}
+}
+
+// A view counts as granted only when it is mounted at EVERY active location.
+// Anything else reads as drift under a tagged name, so the reconciler converges
+// it: half-moved (@partial) or left behind at a retired location (@stale).
+func TestReadReaderViewsAcrossLocations(t *testing.T) {
+	root := t.TempDir()
+	groups, views := filepath.Join(root, "teams"), filepath.Join(root, "views")
+	// The view's root and the folder holding it present the same gid here (the
+	// test's own), which is what "working" checks.
+	for _, d := range []string{
+		filepath.Join(groups, "sim-ro", "sim"),
+		filepath.Join(views, "sim-ro", "sim"),
+	} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mount := func(point string) string {
+		return "1 1 0:1 /teams/sim " + point + " ro,noatime,idmapped shared:1 - zfs tank/nas rw\n"
+	}
+	read := func(l ViewLayout, mounts ...string) []string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "mountinfo")
+		if err := os.WriteFile(p, []byte(strings.Join(mounts, "")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		old := mountsFile
+		mountsFile = p
+		defer func() { mountsFile = old }()
+		got, err := OS{}.ReadReaderViews(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got["sim"]
+	}
+	legacy, moved := mount(filepath.Join(groups, "sim-ro", "sim")), mount(filepath.Join(views, "sim-ro", "sim"))
+	transition := ViewLayout{Groups: groups, Views: views, Legacy: true}
+	done := ViewLayout{Groups: groups, Views: views}
+
+	for _, tc := range []struct {
+		what   string
+		layout ViewLayout
+		mounts []string
+		want   []string
+	}{
+		{"legacy only, as before", ViewLayout{Groups: groups, Legacy: true}, []string{legacy}, []string{"sim-ro"}},
+		{"transition, only the old one up", transition, []string{legacy}, []string{"sim-ro@partial"}},
+		{"transition, both up", transition, []string{legacy, moved}, []string{"sim-ro"}},
+		{"moved, old one still up", done, []string{legacy, moved}, []string{"sim-ro", "sim-ro@stale"}},
+		{"moved, converged", done, []string{moved}, []string{"sim-ro"}},
+	} {
+		if got := read(tc.layout, tc.mounts...); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: views = %v; want %v", tc.what, got, tc.want)
+		}
+	}
 }

@@ -12,8 +12,9 @@ import (
 
 // These mount for real: id-mapped, read-only binds under a scratch directory.
 // They need root and a kernel and filesystem that support id-mapped mounts, so
-// they sit behind `-tags mount` and are run by hand on the host that serves the
-// views, before a change to how views are made reaches it:
+// they sit behind `-tags mount`. CI runs them (the `mount` job); run them by
+// hand on the host that serves the views, before a change to how views are made
+// reaches it:
 //
 //	go test -c -tags mount -o fsops-mount.test ./internal/fsops
 //	sudo ./fsops-mount.test -test.v

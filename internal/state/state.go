@@ -55,12 +55,6 @@ type Group struct {
 	// not be read", so silence is never mistaken for "no readers declared".
 	ReaderViews      []string
 	ReaderViewsKnown bool
-
-	// LegacyReaderGIDs are named-group ACL entries still present on the folder
-	// itself, which is how readers were granted before the views. They are drift
-	// in their own right: while one is there, a reader taken out of the roster
-	// still gets in, so the folder is not converged until they are gone.
-	LegacyReaderGIDs []uint32
 }
 
 // Smb is an actual SMB (tdbsam) account and whether it is enabled.

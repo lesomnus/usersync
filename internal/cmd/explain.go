@@ -142,10 +142,6 @@ type groupExplain struct {
 	// operator asks it both ways.
 	Readers []readerExplain `json:"readers"`
 	Reads   []string        `json:"reads"`
-	// LegacyACLGIDs are reader grants still written on the folder by an older
-	// version. They are a second way in and apply removes them, so a non-empty
-	// list here means this folder has not converged.
-	LegacyACLGIDs []uint32 `json:"legacy_acl_gids,omitempty"`
 }
 
 func explainGroup(fs fsops.OS, ro *roster.Roster, l fsops.ViewLayout, g roster.Group, views map[string][]string) groupExplain {
@@ -183,12 +179,6 @@ func explainGroup(fs fsops.OS, ro *roster.Roster, l fsops.ViewLayout, g roster.G
 		})
 	}
 	sort.Slice(e.Readers, func(i, j int) bool { return e.Readers[i].Name < e.Readers[j].Name })
-
-	if e.Exists {
-		if gids, err := fs.ReadReaderGIDs(folder); err == nil {
-			e.LegacyACLGIDs = gids
-		}
-	}
 	return e
 }
 
@@ -220,12 +210,5 @@ func printExplain(cmd *xli.Command, e groupExplain) {
 	}
 	if len(e.Reads) > 0 {
 		cmd.Printf("  reads    this group is a reader of: %s\n", strings.Join(e.Reads, ", "))
-	}
-	if len(e.LegacyACLGIDs) > 0 {
-		gids := make([]string, len(e.LegacyACLGIDs))
-		for i, g := range e.LegacyACLGIDs {
-			gids[i] = fmt.Sprint(g)
-		}
-		cmd.Printf("  acl      gid(s) %s still granted on the folder by an older version — `apply` clears these\n", strings.Join(gids, ", "))
 	}
 }

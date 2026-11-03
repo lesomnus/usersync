@@ -96,7 +96,7 @@ func loadRoster(cmd *xli.Command, c *config.Config, cls *idrange.Classifier) (*r
 	if err != nil {
 		return nil, nil, z.Err(err, "validate roster %q", path)
 	}
-	if err := checkReadAll(ro, c); err != nil {
+	if err := checkViews(ro, c); err != nil {
 		return nil, nil, z.Err(err, "validate roster %q", path)
 	}
 	// Narrowed explicitly. Validate no longer does it as a side effect, so a
@@ -248,21 +248,16 @@ func (p printFS) EnsureHomeDir(path string, uid, gid uint32) error {
 // the real FS); present only to satisfy fsops.FS.
 func (printFS) Stat(string) (bool, uint32, uint32, uint32) { return false, 0, 0, 0 }
 
-func (printFS) ReadReaderGIDs(string) ([]uint32, error) { return nil, nil }
-
 func (printFS) ReadReaderViews(fsops.ViewLayout) (map[string][]string, error) { return nil, nil }
 
 func (p printFS) EnsureReaderViews(l fsops.ViewLayout, team string, teamGID uint32, readers []fsops.ReaderGroup) error {
 	src := filepath.Join(l.Groups, team)
-	fmt.Fprintf(p.w, "    setfacl -b -k %s   # drop any reader ACL an older version left\n", src)
 	if len(readers) == 0 {
 		fmt.Fprintf(p.w, "    umount every read-only view of %s\n", src)
 		return nil
 	}
 	for _, r := range readers {
-		for _, point := range l.Points(team, r.Name) {
-			fmt.Fprintf(p.w, "    mount --rbind -o ro,X-mount.idmap='<%d→%d>' %s %s\n", teamGID, r.GID, src, point)
-		}
+		fmt.Fprintf(p.w, "    mount --rbind -o ro,X-mount.idmap='<%d→%d>' %s %s\n", teamGID, r.GID, src, l.Path(team, r.Name))
 	}
 	return nil
 }
@@ -315,16 +310,17 @@ func collectActual(ctx context.Context, c *config.Config, r run.Runner, cls *idr
 	})
 }
 
-// checkReadAll refuses read_all unless views are only in the view namespace. A
-// read_all group reads reader groups too, and at the legacy location a reader
-// group's folder holds views, which an id-mapped mount cannot map again — so
-// the grant would fail at apply, after a validate that passed (usersync#13).
-func checkReadAll(ro *roster.Roster, c *config.Config) error {
-	if !ro.HasReadAll() {
+// checkViews refuses a roster that grants readers when there is no view
+// namespace to mount their views in: it would load and validate, then fail at
+// apply.
+func checkViews(ro *roster.Roster, c *config.Config) error {
+	if c.Paths.Views != "" {
 		return nil
 	}
-	if l := c.ViewLayout(); l.Views == "" || l.Legacy {
-		return fmt.Errorf("read_all needs the view namespace only: set paths.views and legacy_views: false in %s", configName(c))
+	for _, g := range ro.Groups {
+		if len(ro.GroupReaders(g)) > 0 || g.ReadAll {
+			return fmt.Errorf("group %q has readers, which need paths.views in %s", g.Name, configName(c))
+		}
 	}
 	return nil
 }

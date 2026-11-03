@@ -39,21 +39,22 @@ func TestReloadConfig(t *testing.T) {
 	}
 
 	// A change is swapped in.
-	write(base + "legacy_views: false\n")
+	moved := "paths: { home: /srv/h, groups: /srv/g, views: /srv/v2 }\n"
+	write(moved)
 	if otelChanged, err := reloadConfig(cmd, c, &otelAsRead); err != nil {
 		t.Fatalf("reload: %v", err)
 	} else if otelChanged {
 		t.Error("an unchanged otel section was reported as changed")
 	}
-	if l := c.ViewLayout(); l.Legacy {
-		t.Fatalf("legacy_views: false did not take: %+v", l)
+	if l := c.ViewLayout(); l.Views != "/srv/v2" {
+		t.Fatalf("the new paths.views did not take: %+v", l)
 	}
 	if c.Path() != p {
 		t.Errorf("path = %q; want %q", c.Path(), p)
 	}
 
 	// One that does not load leaves the last good config.
-	write(base + "legacy_views: false\nmoode: audit\n")
+	write(moved + "moode: audit\n")
 	if _, err := reloadConfig(cmd, c, &otelAsRead); err == nil {
 		t.Fatal("a config with an unknown key was reloaded")
 	}
@@ -61,7 +62,7 @@ func TestReloadConfig(t *testing.T) {
 	if _, err := reloadConfig(cmd, c, &otelAsRead); err == nil {
 		t.Fatal("an invalid config was reloaded")
 	}
-	if c.Paths.Views != "/srv/v" || c.ViewLayout().Legacy {
+	if c.Paths.Views != "/srv/v2" {
 		t.Fatalf("a rejected reload changed the config: %+v", c.Paths)
 	}
 

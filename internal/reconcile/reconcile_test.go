@@ -653,26 +653,6 @@ func TestReadersDriftWhenRosterNarrows(t *testing.T) {
 	}
 }
 
-// A folder provisioned by an older version carries the readers as an ACL. The
-// views can be exactly right and that entry still lets in a group the roster no
-// longer declares, so it is drift on its own.
-func TestReadersDriftWhileTheLegacyACLRemains(t *testing.T) {
-	d := &roster.Roster{
-		Groups: []roster.Group{
-			{Name: "perception", GID: 7001, Readers: []string{"perception-ro"}},
-			{Name: "perception-ro", GID: 7011},
-		},
-	}
-	s := state.New()
-	g := okReaders(okFolder(state.Group{Name: "perception", GID: 7001}), "perception-ro")
-	g.LegacyReaderGIDs = []uint32{7011}
-	s.Groups["perception"] = g
-	s.Groups["perception-ro"] = okReaders(okFolder(state.Group{Name: "perception-ro", GID: 7011}))
-	if got := Reconcile(d, s, cls()); !hasKind(got, SetGroupReaders) {
-		t.Errorf("a reader ACL left on the folder was not cleared: %v", kinds(got))
-	}
-}
-
 func sz(n uint64) *roster.Size { s := roster.Size(n); return &s }
 
 // findKind returns the first action of kind k, or nil.

@@ -259,8 +259,8 @@ type Group struct {
 	// everyone.
 	//
 	// The split is made by a MOUNT rather than by anything written on the files:
-	// each reader group gets a read-only, id-mapped bind of this folder inside
-	// its own folder (<groups>/<reader>/<this group>), and the mapping makes the
+	// each reader group gets a read-only, id-mapped bind of this folder in the
+	// view namespace (<views>/<reader>/<this group>), and the mapping makes the
 	// folder's gid appear to be the reader's own. So a reader reads by the
 	// ordinary group mode bit, and every write is refused by the kernel with
 	// EROFS — over the web path and SMB alike, exactly as the mode bits are
@@ -333,11 +333,6 @@ type Group struct {
 	// groups that opt out with ReadAllExempt, and itself. Naming a read_all group
 	// in a `readers` list it would reach anyway is refused as redundant; on an
 	// exempt group it is how that group is still shared with it.
-	//
-	// It needs the view namespace (`paths.views`, with `legacy_views: false`):
-	// at the legacy location a reader group's folder holds its views, and an
-	// id-mapped mount cannot be id-mapped again, so reading a reader group would
-	// fail. The command that loads the roster refuses it otherwise.
 	ReadAll bool `yaml:"read_all,omitempty"`
 
 	// ReadAllExempt keeps read_all groups out of this group's folder, for a folder

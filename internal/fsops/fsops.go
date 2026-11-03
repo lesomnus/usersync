@@ -6,12 +6,8 @@
 package fsops
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
-	"sort"
-	"strconv"
-	"strings"
 	"syscall"
 )
 
@@ -30,22 +26,11 @@ type FS interface {
 	// setgid bit folded in as 0o2000) and owning uid/gid.
 	Stat(path string) (exists bool, perm, uid, gid uint32)
 
-	// ReadReaderGIDs returns the gids granted a read-only (r-x, no w) ACL entry
-	// on path's ACCESS ACL, sorted.
-	//
-	// Readers are no longer expressed this way, so on a converged system this
-	// answers empty. It is still read because a folder provisioned by an older
-	// version carries those entries, and they have to come off before the view
-	// is the only thing granting a reader — otherwise a reader taken out of the
-	// roster would keep the access the ACL still gives them.
-	ReadReaderGIDs(path string) ([]uint32, error)
-
 	// ReadReaderViews returns, per team folder, the reader groups that currently
-	// hold a working read-only view of it at every active location of the layout.
+	// hold a working read-only view of it in the view namespace.
 	ReadReaderViews(l ViewLayout) (map[string][]string, error)
 	// EnsureReaderViews makes readers exactly the groups holding a read-only
-	// view of the team's folder, and clears any reader ACL left on the folder
-	// itself by an older version.
+	// view of the team's folder.
 	EnsureReaderViews(l ViewLayout, team string, teamGID uint32, readers []ReaderGroup) error
 }
 
@@ -103,58 +88,9 @@ func (OS) EnsureHomeDir(path string, uid, gid uint32) error {
 	return os.Chmod(path, 0o700)
 }
 
-// getfacl/setfacl are shelled out rather than reimplemented. The ACL wire
-// format is a kernel/xattr detail (system.posix_acl_access), and the tools are
-// the same ones an operator reaches for to check the result by hand — so what
-// usersync writes and what `getfacl` shows an admin are produced by one
-// implementation, not two that can disagree. The same reasoning applies to
-// mount(8) in view.go.
-
-// ReadReaderGIDs parses `getfacl` for named-group entries that grant read but
-// not write on the access ACL.
-func (OS) ReadReaderGIDs(path string) ([]uint32, error) {
-	out, err := exec.Command("getfacl", "-pnE", path).Output()
-	if err != nil {
-		return nil, fmt.Errorf("getfacl %s: %w", path, err)
-	}
-	return parseReaderGIDs(string(out)), nil
-}
-
-// parseReaderGIDs extracts the numeric gids of named-group ACCESS entries that
-// grant read but not write. Pulled out of ReadReaderGIDs so the getfacl parsing
-// is testable without a real filesystem.
-func parseReaderGIDs(getfacl string) []uint32 {
-	var gids []uint32
-	for _, line := range strings.Split(getfacl, "\n") {
-		line = strings.TrimSpace(line)
-		// A default entry ("default:...") is an inheritance template, not the
-		// access grant being compared; the owning-group entry ("group::...") has
-		// an empty gid field. Both are skipped.
-		if strings.HasPrefix(line, "default:") || !strings.HasPrefix(line, "group:") {
-			continue
-		}
-		// group:<gid>:<perms> — the numeric form, because getfacl was asked with
-		// -n. An effective-rights comment (#effective:...) is trimmed off first.
-		if i := strings.IndexByte(line, '#'); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		f := strings.SplitN(line, ":", 3)
-		if len(f) != 3 || f[1] == "" {
-			continue
-		}
-		gid, err := strconv.ParseUint(f[1], 10, 32)
-		if err != nil {
-			continue
-		}
-		// A reader has r and not w. A writer group would show rw and is not a
-		// reader; this is what lets one folder carry both.
-		if strings.Contains(f[2], "r") && !strings.Contains(f[2], "w") {
-			gids = append(gids, uint32(gid))
-		}
-	}
-	sort.Slice(gids, func(i, j int) bool { return gids[i] < gids[j] })
-	return gids
-}
+// mount(8) is shelled out rather than reimplemented (view.go): the tools are the
+// same ones an operator reaches for to check the result by hand, so what
+// usersync does and what they show are produced by one implementation.
 
 func run(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).CombinedOutput()

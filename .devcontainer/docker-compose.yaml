@@ -38,7 +38,7 @@ services:
   # `-v /workspace/dist/usersync:...` resolve correctly (the daemon, not the dev
   # container, resolves bind-mount source paths).
   docker:
-    image: docker:27-dind
+    image: docker:29-dind
     privileged: true
     environment:
       - DOCKER_TLS_CERTDIR= # plain TCP on 2375 over the internal compose network

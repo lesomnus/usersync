@@ -4,9 +4,9 @@ go 1.26.2
 
 require (
 	github.com/goccy/go-yaml v1.19.2
-	github.com/lesomnus/mkot v0.0.0-20261101233651-56284edc7453
-	github.com/lesomnus/mkot/pretty v0.0.0-20261101233651-56284edc7453
-	github.com/lesomnus/otx v0.0.0-20261101232829-bc58838cf65b
+	github.com/lesomnus/mkot v0.0.0-20261102031530-c2e07a0dfebd
+	github.com/lesomnus/mkot/pretty v0.0.0-20261102031530-c2e07a0dfebd
+	github.com/lesomnus/otx v0.0.0-20261102031404-1af2b893f1e9
 	github.com/lesomnus/xli v0.0.0-20261009121920-4ce270c7448c
 	github.com/lesomnus/z v0.0.0-20260907061127-c3858eb05878
 	github.com/stretchr/testify v1.12.1
